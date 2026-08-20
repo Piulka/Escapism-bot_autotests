@@ -1,5 +1,4 @@
 import os
-from time import sleep
 from typing import Any
 
 import pytest
@@ -52,24 +51,13 @@ def _assert_status(
     )
 
 
-def _get_json_with_retry(
+def _get_json(
     api_context: APIRequestContext,
     path: str,
 ) -> Any:
-    response = None
-
-    max_attempts = 8
-
-    for attempt in range(max_attempts):
-        response = api_context.get(path)
-        if response.status == 200:
-            return response.json()
-        if response.status not in {500, 502, 503, 504}:
-            break
-        if attempt < max_attempts - 1:
-            sleep(0.5)
-
+    response = api_context.get(path)
     _assert_status(response, 200, "GET")
+    return response.json()
 
 
 def reset_user(playwright: Playwright, launch_params: str) -> None:
@@ -80,16 +68,7 @@ def reset_user(playwright: Playwright, launch_params: str) -> None:
     )
 
     try:
-        response = None
-        max_attempts = 8
-        for attempt in range(max_attempts):
-            response = api_context.post("v1/account/reset")
-            if response.status == 200:
-                break
-            if response.status not in {502, 503, 504}:
-                break
-            if attempt < max_attempts - 1:
-                sleep(0.5)
+        response = api_context.post("v1/account/reset")
         _assert_status(response, 200, "POST")
     finally:
         api_context.dispose()
@@ -106,7 +85,7 @@ def get_user_profile(
     )
 
     try:
-        return _get_json_with_retry(api_context, "v1/profile")
+        return _get_json(api_context, "v1/profile")
     finally:
         api_context.dispose()
 
@@ -122,7 +101,7 @@ def get_exchange_pool(
     )
 
     try:
-        return _get_json_with_retry(api_context, "exchange/pool")
+        return _get_json(api_context, "exchange/pool")
     finally:
         api_context.dispose()
 
@@ -138,7 +117,7 @@ def get_user_inventory(
     )
 
     try:
-        return _get_json_with_retry(api_context, "v1/inventory")
+        return _get_json(api_context, "v1/inventory")
     finally:
         api_context.dispose()
 
@@ -154,7 +133,7 @@ def get_user_warehouse(
     )
 
     try:
-        return _get_json_with_retry(api_context, "warehouse")
+        return _get_json(api_context, "warehouse")
     finally:
         api_context.dispose()
 
@@ -234,7 +213,7 @@ def get_user_mail(
     )
 
     try:
-        return _get_json_with_retry(
+        return _get_json(
             api_context,
             "mail?page=1&limit=100",
         )
@@ -271,7 +250,7 @@ def get_user_guild(
     )
 
     try:
-        return _get_json_with_retry(api_context, "guild")
+        return _get_json(api_context, "guild")
     finally:
         api_context.dispose()
 
@@ -287,7 +266,7 @@ def get_guild_members(
     )
 
     try:
-        return _get_json_with_retry(api_context, "guild/members")
+        return _get_json(api_context, "guild/members")
     finally:
         api_context.dispose()
 
@@ -303,7 +282,7 @@ def get_guild_applications(
     )
 
     try:
-        return _get_json_with_retry(
+        return _get_json(
             api_context,
             "guild/applications",
         )

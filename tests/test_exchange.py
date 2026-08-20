@@ -194,3 +194,61 @@ def test_exchange_gold_to_silver_and_back(
     # charge a fee and integer currency amounts are rounded down.
     assert abs(rate_after_second - rate_before) <= 1
     _expect_displayed_rate(user_1_page, rate_after_second)
+
+
+@pytest.mark.regression
+def test_exchange_information_and_back_navigation(
+    user_1_page: Page,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+
+    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
+    user_1_page.get_by_label("Биржа").click()
+    expect(
+        user_1_page.get_by_role(
+            "heading",
+            name="Биржа валюты",
+        )
+    ).to_be_visible()
+
+    # TODO: replace icon locators when both controls receive accessible names.
+    user_1_page.locator(
+        "button:has(svg.lucide-info)"
+    ).first.click()
+    information_dialog = user_1_page.get_by_role(
+        "dialog",
+        name="О Бирже валюты",
+    )
+    expect(information_dialog).to_be_visible()
+    expect(information_dialog).to_contain_text(
+        "AMM (Automated Market Maker)"
+    )
+    expect(
+        information_dialog.get_by_role(
+            "heading",
+            name="Как формируется цена?",
+        )
+    ).to_be_visible()
+    expect(
+        information_dialog.get_by_role(
+            "heading",
+            name="Комиссия и инфляция",
+        )
+    ).to_be_visible()
+    expect(information_dialog).to_contain_text("комиссия 5%")
+
+    information_dialog.get_by_role("button").click()
+    expect(information_dialog).to_have_count(0)
+
+    user_1_page.get_by_role(
+        "button",
+        name="Назад",
+        exact=True,
+    ).click()
+    expect(
+        user_1_page.get_by_role(
+            "heading",
+            name="Биржа валюты",
+        )
+    ).to_have_count(0)
+    expect(user_1_page.get_by_label("Биржа")).to_be_visible()

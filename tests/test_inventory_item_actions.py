@@ -9,6 +9,7 @@ from api_client import (
     get_user_inventory,
     get_user_profile,
     get_user_warehouse,
+    reset_user,
     unequip_inventory_item,
     unlock_inventory_item,
     withdraw_warehouse_item,
@@ -233,11 +234,24 @@ def test_move_item_between_inventory_warehouse_and_equipment(
             ITEM_ID,
         )
 
+        # Remount the warehouse list after the cross-state mutation without
+        # reloading the whole app and its bootstrap data.
         user_1_page.get_by_role(
+            "button",
+            name="Сумка",
+            exact=False,
+        ).first.click()
+        user_1_page.get_by_role(
+            "button",
+            name=re.compile(r"^Склад"),
+        ).click()
+        warehouse_item = user_1_page.get_by_role(
             "button",
             name=ITEM_NAME,
             exact=True,
-        ).click()
+        )
+        expect(warehouse_item).to_be_visible()
+        warehouse_item.click()
         with user_1_page.expect_response(
             lambda response: _is_post_response(
                 response,
@@ -394,3 +408,81 @@ def test_lock_item_blocks_dangerous_actions_and_unlock_restores_them(
                 launch_params,
                 ITEM_ID,
             )
+
+
+@pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-009: item trash has no confirmation dialog",
+    strict=True,
+)
+def test_trash_item_requires_confirmation_and_removes_it(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+
+    assert _has_item(
+        get_user_inventory(playwright, launch_params),
+        ITEM_ID,
+    )
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params
+        )
+        user_1_page.get_by_role(
+            "button",
+            name="Сумка",
+            exact=True,
+        ).click()
+        user_1_page.get_by_role(
+            "button",
+            name=ITEM_NAME,
+            exact=True,
+        ).click()
+
+        user_1_page.get_by_role(
+            "button",
+            name="Выбросить",
+            exact=True,
+        ).click()
+
+        confirmation = user_1_page.get_by_role(
+            "dialog",
+            name=re.compile(r"Выбросить"),
+        )
+        expect(confirmation).to_be_visible()
+        expect(confirmation).to_contain_text(ITEM_NAME)
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/inventory/trash",
+            )
+        ) as trash_response_info:
+            confirmation.get_by_role(
+                "button",
+                name="Выбросить",
+                exact=True,
+            ).click()
+
+        trash_response = trash_response_info.value
+        assert trash_response.status == 200, (
+            f"Item trash failed: {trash_response.text()}"
+        )
+        assert trash_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+        }
+        assert not _has_item(
+            get_user_inventory(playwright, launch_params),
+            ITEM_ID,
+        )
+        expect(
+            user_1_page.get_by_role(
+                "button",
+                name=ITEM_NAME,
+                exact=True,
+            )
+        ).to_have_count(0)
+    finally:
+        reset_user(playwright, launch_params)

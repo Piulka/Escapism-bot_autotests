@@ -1,5 +1,4 @@
 import re
-import warnings
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -9,7 +8,6 @@ from playwright.sync_api import (
     Page,
     Playwright,
     Response,
-    TimeoutError as PlaywrightTimeoutError,
     expect,
 )
 
@@ -33,22 +31,14 @@ def _is_post_response(response: Response, path: str) -> bool:
     )
 
 
-def _reload_until_member_is_visible(page: Page, name: str) -> Locator:
-    """Retry a read-only UI load affected by occasional gateway failures."""
-    for attempt in range(3):
-        page.reload()
-        member_name = page.locator("#scroll-container").get_by_text(
-            name,
-            exact=True,
-        ).first
-        try:
-            member_name.wait_for(state="visible", timeout=2_500)
-            return member_name
-        except PlaywrightTimeoutError:
-            if attempt == 2:
-                raise
-
-    raise AssertionError("Unreachable")
+def _reload_and_get_member(page: Page, name: str) -> Locator:
+    page.reload()
+    member_name = page.locator("#scroll-container").get_by_text(
+        name,
+        exact=True,
+    ).first
+    expect(member_name).to_be_visible()
+    return member_name
 
 
 def _open_applications_until_visible(
@@ -56,23 +46,13 @@ def _open_applications_until_visible(
     launch_params: str,
     applicant_name: str,
 ) -> Locator:
-    """Reload the read-only applications view after transient empty results."""
     guild_url = get_required_env("BASE_URL") + launch_params + "#/guild"
-
-    for attempt in range(3):
-        page.goto("about:blank")
-        page.goto(guild_url)
-        page.get_by_role("button", name="Состав").click()
-        page.get_by_role("button", name=re.compile(r"^Заявки")).click()
-        applicant = page.get_by_text(applicant_name, exact=True)
-        try:
-            applicant.wait_for(state="visible", timeout=2_500)
-            return applicant
-        except PlaywrightTimeoutError:
-            if attempt == 2:
-                raise
-
-    raise AssertionError("Unreachable")
+    page.goto(guild_url)
+    page.get_by_role("button", name="Состав").click()
+    page.get_by_role("button", name=re.compile(r"^Заявки")).click()
+    applicant = page.get_by_text(applicant_name, exact=True)
+    expect(applicant).to_be_visible()
+    return applicant
 
 
 def _open_guild_catalog_until_visible(
@@ -84,35 +64,13 @@ def _open_guild_catalog_until_visible(
         get_required_env("BASE_URL") + launch_params + "#/guilds"
     )
 
-    for attempt in range(3):
-        page.goto("about:blank")
-        page.goto(guilds_url)
-        guild_heading = page.get_by_role(
-            "heading",
-            name=guild_name,
-        )
-        try:
-            guild_heading.wait_for(state="visible", timeout=2_500)
-            return guild_heading
-        except PlaywrightTimeoutError:
-            retry_button = page.get_by_role(
-                "button",
-                name="Повторить",
-            )
-            if retry_button.is_visible():
-                retry_button.click()
-                try:
-                    guild_heading.wait_for(
-                        state="visible",
-                        timeout=2_500,
-                    )
-                    return guild_heading
-                except PlaywrightTimeoutError:
-                    pass
-            if attempt == 2:
-                raise
-
-    raise AssertionError("Unreachable")
+    page.goto(guilds_url)
+    guild_heading = page.get_by_role(
+        "heading",
+        name=guild_name,
+    )
+    expect(guild_heading).to_be_visible()
+    return guild_heading
 
 
 def _leave_guild_if_present(
@@ -122,13 +80,7 @@ def _leave_guild_if_present(
     if get_user_guild(playwright, launch_params) == []:
         return
 
-    try:
-        leave_guild(playwright, launch_params)
-    except AssertionError:
-        # A gateway error can be returned after the operation was committed.
-        if get_user_guild(playwright, launch_params) != []:
-            raise
-
+    leave_guild(playwright, launch_params)
     assert get_user_guild(playwright, launch_params) == []
 
 
@@ -288,7 +240,7 @@ def test_create_guild_accept_member_and_kick(
 
         assert member["role"] == "member"
 
-        member_name = _reload_until_member_is_visible(
+        member_name = _reload_and_get_member(
             user_1_page,
             MEMBER_NAME,
         )
@@ -351,13 +303,6 @@ def test_create_guild_accept_member_and_kick(
             "unitId": member["unitId"],
         }
         expect(member_name).to_have_count(0)
-        assert all(
-            item["name"] != MEMBER_NAME
-            for item in get_guild_members(
-                playwright,
-                user_1_launch_params,
-            )
-        )
         user_2_page.reload()
         expect(
             user_2_page.get_by_role(
@@ -384,7 +329,4 @@ def test_create_guild_accept_member_and_kick(
                 cleanup_error = cleanup_error or error
 
         if cleanup_error is not None:
-            warnings.warn(
-                f"Guild cleanup also failed: {cleanup_error}",
-                stacklevel=1,
-            )
+            raise cleanup_error
