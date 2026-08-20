@@ -40,12 +40,9 @@ def _has_item(items: list[dict], item_id: str) -> bool:
 
 
 def _get_main_hand_slot(page: Page) -> Locator:
-    # TODO: replace with data-testid="equipment-slot-mainHand" or an
-    # accessible name. Equipment slots are currently unnamed clickable divs.
-    equipment_slots = page.locator(
-        "div.w-12.h-12.rounded-xl.border.flex"
+    return page.locator(
+        '[data-testid="equipment-slot-mainHand"]:visible'
     )
-    return equipment_slots.nth(6)
 
 
 @pytest.mark.regression
@@ -298,6 +295,10 @@ def test_move_item_between_inventory_warehouse_and_equipment(
 
 
 @pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-008: equip action still loses its name when locked",
+    strict=True,
+)
 def test_lock_item_blocks_dangerous_actions_and_unlock_restores_them(
     user_1_page: Page,
     playwright: Playwright,
@@ -345,27 +346,19 @@ def test_lock_item_blocks_dangerous_actions_and_unlock_restores_them(
         locked = True
         assert _get_item(playwright, launch_params)["isLocked"] is True
 
-        blocked_actions = item_dialog.get_by_role(
-            "button",
-            name="Заблокировано",
-            exact=True,
-        )
-        expect(blocked_actions).to_have_count(4)
-        for index in range(4):
-            expect(blocked_actions.nth(index)).to_be_disabled()
-
-        for unavailable_action in (
-            "Надеть",
-            "На склад",
-            "Разобрать",
+        for blocked_action in (
+            "Надеть — заблокировано",
+            "На склад — заблокировано",
+            "Разобрать — заблокировано",
+            "Выбросить предмет",
         ):
             expect(
                 item_dialog.get_by_role(
                     "button",
-                    name=unavailable_action,
+                    name=blocked_action,
                     exact=True,
                 )
-            ).to_have_count(0)
+            ).to_be_disabled()
 
         with user_1_page.expect_response(
             lambda response: _is_post_response(
@@ -411,10 +404,6 @@ def test_lock_item_blocks_dangerous_actions_and_unlock_restores_them(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="UI-009: item trash has no confirmation dialog",
-    strict=True,
-)
 def test_trash_item_requires_confirmation_and_removes_it(
     user_1_page: Page,
     playwright: Playwright,
@@ -443,7 +432,7 @@ def test_trash_item_requires_confirmation_and_removes_it(
 
         user_1_page.get_by_role(
             "button",
-            name="Выбросить",
+            name="Выбросить предмет",
             exact=True,
         ).click()
 

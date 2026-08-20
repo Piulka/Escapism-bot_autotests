@@ -49,8 +49,10 @@ def _open_create_guild_dialog(page: Page, launch_params: str) -> Locator:
 
 
 def _open_recruitment_dialog(page: Page) -> Locator:
-    # TODO: replace the icon locator after UI-013 is fixed.
-    page.locator("button:has(svg.lucide-pen)").click()
+    page.get_by_role(
+        "button",
+        name="Редактировать текст набора",
+    ).click()
     dialog = page.get_by_role(
         "dialog",
         name="Редактировать текст набора",
@@ -221,11 +223,15 @@ def test_create_guild_accept_member_and_kick(
             "name": guild_name,
             "tag": guild_tag,
         }
-        guild_heading = _open_guild_catalog_until_visible(
-            user_2_page,
-            user_2_launch_params,
-            guild_name,
+        user_2_page.goto(
+            get_required_env("BASE_URL") + user_2_launch_params
         )
+        user_2_page.get_by_label("Гильдия").click()
+        guild_heading = user_2_page.get_by_role(
+            "heading",
+            name=guild_name,
+        )
+        expect(guild_heading).to_be_visible()
         guild_card = guild_heading.locator(
             "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
         )
@@ -345,8 +351,10 @@ def test_create_guild_accept_member_and_kick(
             )
         ).to_be_visible()
 
-        # TODO: make guild member rows accessible buttons.
-        member_name.click()
+        user_1_page.get_by_role(
+            "button",
+            name=f"Управление участником {MEMBER_NAME}",
+        ).click()
         expect(
             user_1_page.get_by_role(
                 "heading",
@@ -598,11 +606,15 @@ def test_reject_reapply_accept_and_leave_guild(
             user_1_launch_params,
         ) == []
 
-        guild_heading = _open_guild_catalog_until_visible(
-            user_2_page,
-            user_2_launch_params,
-            guild_name,
+        user_2_page.goto(
+            get_required_env("BASE_URL") + user_2_launch_params
         )
+        user_2_page.get_by_label("Гильдия").click()
+        guild_heading = user_2_page.get_by_role(
+            "heading",
+            name=guild_name,
+        )
+        expect(guild_heading).to_be_visible()
         guild_card = guild_heading.locator(
             "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
         )
@@ -724,7 +736,10 @@ def test_regular_guild_member_cannot_use_leader_actions(
             user_2_page.get_by_role("button", name=re.compile(r"^Заявки"))
         ).to_have_count(0)
         expect(
-            user_2_page.locator("button:has(svg.lucide-pen)")
+            user_2_page.get_by_role(
+                "button",
+                name="Редактировать текст набора",
+            )
         ).to_have_count(0)
     finally:
         _leave_guild_users(

@@ -95,11 +95,10 @@ def test_exchange_gold_to_silver_and_back(
     amount_input = _open_exchange(user_1_page, launch_params)
     _expect_displayed_rate(user_1_page, rate_before)
 
-    # TODO: ask frontend to add an aria-label to the direction button.
-    direction_button = user_1_page.locator(
-        "button:has(svg.lucide-arrow-down-up)"
-    )
-    direction_button.click()
+    user_1_page.get_by_role(
+        "button",
+        name="Обменять серебро на золото",
+    ).click()
     amount_input.fill(str(GOLD_TO_EXCHANGE))
 
     expected_silver = _calculate_amount_out(
@@ -154,7 +153,10 @@ def test_exchange_gold_to_silver_and_back(
     assert rate_after_first < rate_before
     _expect_displayed_rate(user_1_page, rate_after_first)
 
-    direction_button.click()
+    user_1_page.get_by_role(
+        "button",
+        name="Обменять золото на серебро",
+    ).click()
     amount_input.fill(str(expected_silver))
 
     expected_gold = _calculate_amount_out(
@@ -214,10 +216,10 @@ def test_exchange_information_and_back_navigation(
         )
     ).to_be_visible()
 
-    # TODO: replace icon locators when both controls receive accessible names.
-    user_1_page.locator(
-        "button:has(svg.lucide-info)"
-    ).first.click()
+    user_1_page.get_by_role(
+        "button",
+        name="О Бирже валюты",
+    ).click()
     information_dialog = user_1_page.get_by_role(
         "dialog",
         name="О Бирже валюты",
@@ -240,7 +242,11 @@ def test_exchange_information_and_back_navigation(
     ).to_be_visible()
     expect(information_dialog).to_contain_text("комиссия 5%")
 
-    information_dialog.get_by_role("button").click()
+    information_dialog.get_by_role(
+        "button",
+        name="Закрыть",
+        exact=True,
+    ).click()
     expect(information_dialog).to_have_count(0)
 
     user_1_page.get_by_role(
@@ -336,8 +342,9 @@ def test_exchange_double_submit_creates_only_one_transaction(
 
     assert gold_before >= GOLD_TO_EXCHANGE
     amount_input = _open_exchange(user_1_page, launch_params)
-    user_1_page.locator(
-        "button:has(svg.lucide-arrow-down-up)"
+    user_1_page.get_by_role(
+        "button",
+        name="Обменять серебро на золото",
     ).click()
     amount_input.fill(str(GOLD_TO_EXCHANGE))
     user_1_page.on(
@@ -425,14 +432,16 @@ def test_exchange_primary_controls_fit_viewport(
     page.set_viewport_size(viewport)
     amount_input = _open_exchange(page, launch_params)
 
-    # TODO: replace icon locators when the controls receive accessible names.
     controls = [
-        page.locator("button:has(svg.lucide-info)").first,
+        page.get_by_role("button", name="О Бирже валюты"),
         amount_input,
         page.get_by_role("button", name="МАКС", exact=True),
         page.get_by_role("button", name="Увеличить на 100"),
         page.get_by_role("button", name="Уменьшить на 100"),
-        page.locator("button:has(svg.lucide-arrow-down-up)"),
+        page.get_by_role(
+            "button",
+            name="Обменять серебро на золото",
+        ),
         page.get_by_role(
             "group",
             name="Допуск проскальзывания",

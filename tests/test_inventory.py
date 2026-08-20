@@ -59,8 +59,7 @@ def test_equip_and_unequip_item(
 
     assert profile["equipment"]["head"]["id"] == "eq_head_t1"
 
-    # TODO: replace with a data-testid/aria-label when the head slot gets one.
-    user_1_page.locator("svg").nth(3).click()
+    user_1_page.get_by_test_id("equipment-slot-head").click()
 
     with user_1_page.expect_response(
         lambda response: _is_post_response(

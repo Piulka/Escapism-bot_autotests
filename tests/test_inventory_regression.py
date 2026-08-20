@@ -38,8 +38,7 @@ def _open_inventory(page: Page, launch_params: str) -> None:
 
 
 def _filter_button(page: Page) -> Locator:
-    # TODO: ask frontend to add aria-label="Фильтры".
-    return page.locator("button:has(svg.lucide-funnel)").last
+    return page.get_by_role("button", name="Фильтры", exact=True)
 
 
 def _expect_filtered_items(
@@ -320,8 +319,7 @@ def test_item_information_dialogs_and_close_behaviour(
     ).click()
     expect(skills_dialog).to_have_count(0)
 
-    # TODO: ask frontend to name the item-card close button.
-    item_dialog.locator("button").first.click()
+    item_dialog.get_by_role("button", name="Закрыть", exact=True).click()
     expect(item_dialog).to_have_count(0)
 
     item_dialog = _open_item_dialog(page, item["name"])

@@ -148,10 +148,13 @@ def test_send_and_claim_mail_attachments(
             name="+ Добавить",
         ).click()
 
-        # TODO: add accessible names/data-testid with item IDs to the cards.
-        attachment_cards = user_1_page.locator("div.aspect-square")
         for index in ATTACHMENT_INVENTORY_INDEXES:
-            attachment_cards.nth(index).click()
+            item = sender_inventory_before[index]
+            user_1_page.get_by_role(
+                "button",
+                name=f"Прикрепить {item['name']} ({item['quantity']})",
+                exact=True,
+            ).click()
 
         expect(
             user_1_page.get_by_text("Выбрано: 2 / 5", exact=True)
@@ -159,6 +162,7 @@ def test_send_and_claim_mail_attachments(
         user_1_page.get_by_role(
             "button",
             name="Прикрепить",
+            exact=True,
         ).click()
         expect(
             user_1_page.get_by_text("Вложения (2/5)", exact=True)
@@ -240,13 +244,12 @@ def test_send_and_claim_mail_attachments(
         )
         expect(mail_title_element).to_be_visible()
 
-        # TODO: expose unread state through aria/data-testid.
-        mail_card = mail_title_element.locator(
-            "xpath=ancestor::div[contains(@class, 'cursor-pointer')][1]"
+        mail_card = user_2_page.get_by_role(
+            "button",
+            name=f"{mail_title}, не прочитано",
+            exact=True,
         )
-        unread_indicator = mail_card.locator("div.bg-red-500")
         expect(mail_card).to_contain_text(f"От: {SENDER_NAME}")
-        expect(unread_indicator).to_be_visible()
 
         with user_2_page.expect_response(
             lambda response: _is_mail_response(
@@ -254,7 +257,7 @@ def test_send_and_claim_mail_attachments(
                 "/api/mail/read",
             )
         ) as read_response_info:
-            mail_title_element.click()
+            mail_card.click()
 
         read_response = read_response_info.value
 
@@ -264,7 +267,13 @@ def test_send_and_claim_mail_attachments(
         assert read_response.request.post_data_json == {
             "mailId": created_mail_id,
         }
-        expect(unread_indicator).to_have_count(0)
+        expect(
+            user_2_page.get_by_role(
+                "button",
+                name=f"{mail_title}, прочитано",
+                exact=True,
+            )
+        ).to_have_count(1)
         expect(
             user_2_page.get_by_role(
                 "button",
@@ -565,26 +574,44 @@ def test_mail_compose_controls_are_actionable_in_viewport(
 @pytest.mark.regression
 def test_mail_limits_attachments_and_allows_removal(
     page: Page,
+    playwright: Playwright,
 ) -> None:
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    inventory = get_user_inventory(playwright, launch_params)
     _open_mail_compose(page, launch_params)
     picker = _open_attachment_picker(page)
 
-    # TODO: replace positional cards with item-specific accessible names.
-    attachment_cards = picker.locator("div.aspect-square")
-    assert attachment_cards.count() >= 6
-    for index in range(5):
-        attachment_cards.nth(index).click()
+    assert len(inventory) >= 6
+    for item in inventory[:5]:
+        picker.get_by_role(
+            "button",
+            name=f"Прикрепить {item['name']} ({item['quantity']})",
+            exact=True,
+        ).click()
 
     expect(picker.get_by_text("Выбрано: 5 / 5", exact=True)).to_be_visible()
-    attachment_cards.nth(5).click()
+    sixth_item = inventory[5]
+    picker.get_by_role(
+        "button",
+        name=(
+            f"Прикрепить {sixth_item['name']} "
+            f"({sixth_item['quantity']})"
+        ),
+        exact=True,
+    ).click()
     expect(picker.get_by_text("Выбрано: 5 / 5", exact=True)).to_be_visible()
 
-    picker.get_by_role("button", name="Прикрепить").click()
+    picker.get_by_role(
+        "button",
+        name="Прикрепить",
+        exact=True,
+    ).click()
     expect(page.get_by_text("Вложения (5/5)", exact=True)).to_be_visible()
 
-    # TODO: add an accessible name containing the attached item name.
-    remove_buttons = page.locator("button:has(svg.lucide-trash2)")
+    remove_buttons = page.get_by_role(
+        "button",
+        name=re.compile(r"^Удалить вложение:"),
+    )
     expect(remove_buttons).to_have_count(5)
     remove_buttons.first.click()
 
@@ -610,9 +637,17 @@ def test_mail_changes_attachment_quantity_within_available_stack(
     _open_mail_compose(page, launch_params)
     picker = _open_attachment_picker(page)
 
-    # TODO: replace the API-derived position with an accessible item name.
-    picker.locator("div.aspect-square").nth(item_index).click()
-    picker.get_by_role("button", name="Прикрепить").click()
+    item = inventory[item_index]
+    picker.get_by_role(
+        "button",
+        name=f"Прикрепить {item['name']} ({item['quantity']})",
+        exact=True,
+    ).click()
+    picker.get_by_role(
+        "button",
+        name="Прикрепить",
+        exact=True,
+    ).click()
 
     quantity = page.get_by_text(
         f"x{available_quantity}",
