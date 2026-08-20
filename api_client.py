@@ -318,6 +318,69 @@ def create_user_guild(
         api_context.dispose()
 
 
+def apply_to_guild(
+    playwright: Playwright,
+    launch_params: str,
+    guild_id: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/join",
+            data={"guildId": guild_id},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def decide_guild_application(
+    playwright: Playwright,
+    launch_params: str,
+    application_id: int,
+    decision: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            f"guild/applications/{application_id}/{decision}"
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def attempt_kick_guild_member(
+    playwright: Playwright,
+    launch_params: str,
+    unit_id: int,
+) -> tuple[int, dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/kick",
+            data={"unitId": unit_id},
+        )
+        return response.status, response.json()
+    finally:
+        api_context.dispose()
+
+
 def get_guild_members(
     playwright: Playwright,
     launch_params: str,

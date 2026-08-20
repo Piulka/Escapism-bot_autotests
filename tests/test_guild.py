@@ -12,7 +12,10 @@ from playwright.sync_api import (
 )
 
 from api_client import (
+    apply_to_guild,
+    attempt_kick_guild_member,
     create_user_guild,
+    decide_guild_application,
     get_guild_applications,
     get_guild_members,
     get_required_env,
@@ -97,6 +100,21 @@ def _leave_guild_if_present(
     assert get_user_guild(playwright, launch_params) == []
 
 
+def _leave_guild_users(
+    playwright: Playwright,
+    *launch_params_values: str,
+) -> None:
+    cleanup_error = None
+    for launch_params in launch_params_values:
+        try:
+            _leave_guild_if_present(playwright, launch_params)
+        except Exception as error:
+            cleanup_error = cleanup_error or error
+
+    if cleanup_error is not None:
+        raise cleanup_error
+
+
 @pytest.mark.smoke
 def test_create_guild_accept_member_and_kick(
     user_1_page: Page,
@@ -115,8 +133,11 @@ def test_create_guild_accept_member_and_kick(
 
     # Reset does not clear guild membership. Recover leftovers from an aborted
     # previous run before creating this test's isolated state.
-    _leave_guild_if_present(playwright, user_2_launch_params)
-    _leave_guild_if_present(playwright, user_1_launch_params)
+    _leave_guild_users(
+        playwright,
+        user_2_launch_params,
+        user_1_launch_params,
+    )
 
     try:
         user_1_page.goto(
@@ -331,18 +352,11 @@ def test_create_guild_accept_member_and_kick(
             )
         ).to_be_visible()
     finally:
-        cleanup_error = None
-        for launch_params in (
+        _leave_guild_users(
+            playwright,
             user_2_launch_params,
             user_1_launch_params,
-        ):
-            try:
-                _leave_guild_if_present(playwright, launch_params)
-            except Exception as error:
-                cleanup_error = cleanup_error or error
-
-        if cleanup_error is not None:
-            raise cleanup_error
+        )
 
 
 @pytest.mark.regression
@@ -475,8 +489,11 @@ def test_reject_reapply_accept_and_leave_guild(
     guild_name = f"Regression {unique_value[:6]}"
     guild_tag = unique_value[-4:].upper()
 
-    _leave_guild_if_present(playwright, user_2_launch_params)
-    _leave_guild_if_present(playwright, user_1_launch_params)
+    _leave_guild_users(
+        playwright,
+        user_2_launch_params,
+        user_1_launch_params,
+    )
     create_user_guild(
         playwright,
         user_1_launch_params,
@@ -612,14 +629,105 @@ def test_reject_reapply_accept_and_leave_guild(
             user_1_launch_params,
         )} == {LEADER_NAME}
     finally:
-        cleanup_error = None
-        for launch_params in (
+        _leave_guild_users(
+            playwright,
             user_2_launch_params,
             user_1_launch_params,
-        ):
-            try:
-                _leave_guild_if_present(playwright, launch_params)
-            except Exception as error:
-                cleanup_error = cleanup_error or error
-        if cleanup_error is not None:
-            raise cleanup_error
+        )
+
+
+@pytest.mark.regression
+def test_regular_guild_member_cannot_use_leader_actions(
+    user_2_page: Page,
+    reset_user_1: None,
+    playwright: Playwright,
+) -> None:
+    user_1_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    user_2_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    unique_value = uuid4().hex
+    guild_name = f"Roles {unique_value[:6]}"
+    guild_tag = unique_value[-4:].upper()
+
+    _leave_guild_users(
+        playwright,
+        user_2_launch_params,
+        user_1_launch_params,
+    )
+    create_user_guild(
+        playwright,
+        user_1_launch_params,
+        guild_name,
+        guild_tag,
+    )
+
+    try:
+        guild = get_user_guild(playwright, user_1_launch_params)
+        apply_to_guild(
+            playwright,
+            user_2_launch_params,
+            guild["id"],
+        )
+        application = get_guild_applications(
+            playwright,
+            user_1_launch_params,
+        )[0]
+        decide_guild_application(
+            playwright,
+            user_1_launch_params,
+            application["id"],
+            "accept",
+        )
+
+        member_guild = get_user_guild(
+            playwright,
+            user_2_launch_params,
+        )
+        members_before = get_guild_members(
+            playwright,
+            user_2_launch_params,
+        )
+        leader = next(
+            member for member in members_before
+            if member["role"] == "leader"
+        )
+        assert member_guild["myRole"] == "member"
+
+        user_2_page.goto(
+            get_required_env("BASE_URL")
+            + user_2_launch_params
+            + "#/guild"
+        )
+        expect(
+            user_2_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        expect(
+            user_2_page.get_by_role("button", name=re.compile(r"^Заявки"))
+        ).to_have_count(0)
+        expect(
+            user_2_page.locator("button:has(svg.lucide-pencil)")
+        ).to_have_count(0)
+
+        kick_status, kick_body = attempt_kick_guild_member(
+            playwright,
+            user_2_launch_params,
+            leader["unitId"],
+        )
+        assert kick_status == 400
+        assert kick_body == {
+            "error": "Недостаточно прав.",
+            "code": "VALIDATION_ERROR",
+        }
+        assert get_guild_members(
+            playwright,
+            user_2_launch_params,
+        ) == members_before
+    finally:
+        _leave_guild_users(
+            playwright,
+            user_2_launch_params,
+            user_1_launch_params,
+        )
