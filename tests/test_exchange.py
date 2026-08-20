@@ -3,7 +3,7 @@ import re
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, Playwright, Response, expect
+from playwright.sync_api import Locator, Page, Playwright, Response, expect
 
 from api_client import (
     get_exchange_pool,
@@ -70,6 +70,14 @@ def _expect_displayed_rate(page: Page, expected_rate: int) -> None:
     )
 
 
+def _open_exchange(page: Page, launch_params: str) -> Locator:
+    page.goto(get_required_env("BASE_URL") + launch_params)
+    page.get_by_label("Биржа").click()
+    amount_input = page.get_by_label("Сумма обмена")
+    expect(amount_input).to_be_visible()
+    return amount_input
+
+
 @pytest.mark.smoke
 def test_exchange_gold_to_silver_and_back(
     user_1_page: Page,
@@ -84,11 +92,7 @@ def test_exchange_gold_to_silver_and_back(
 
     assert gold_before >= GOLD_TO_EXCHANGE
 
-    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
-    user_1_page.get_by_label("Биржа").click()
-
-    amount_input = user_1_page.get_by_label("Сумма обмена")
-    amount_input.wait_for()
+    amount_input = _open_exchange(user_1_page, launch_params)
     _expect_displayed_rate(user_1_page, rate_before)
 
     # TODO: ask frontend to add an aria-label to the direction button.
@@ -202,8 +206,7 @@ def test_exchange_information_and_back_navigation(
 ) -> None:
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
 
-    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
-    user_1_page.get_by_label("Биржа").click()
+    _open_exchange(user_1_page, launch_params)
     expect(
         user_1_page.get_by_role(
             "heading",
@@ -252,3 +255,104 @@ def test_exchange_information_and_back_navigation(
         )
     ).to_have_count(0)
     expect(user_1_page.get_by_label("Биржа")).to_be_visible()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("invalid_value", "expected_input_value"),
+    [
+        pytest.param("", "", id="empty"),
+        pytest.param("0", "0", id="zero"),
+        pytest.param("-1", "0", id="negative"),
+        pytest.param("1.5", "1.5", id="fractional"),
+        pytest.param("abc", "", id="non-numeric"),
+    ],
+)
+def test_exchange_rejects_invalid_amounts(
+    page: Page,
+    invalid_value: str,
+    expected_input_value: str,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    amount_input = _open_exchange(page, launch_params)
+
+    if invalid_value == "abc":
+        amount_input.press_sequentially(invalid_value)
+    else:
+        amount_input.fill(invalid_value)
+
+    expect(amount_input).to_have_value(expected_input_value)
+    expect(
+        page.get_by_role(
+            "button",
+            name="Обменять",
+            exact=True,
+        )
+    ).to_be_disabled()
+
+
+@pytest.mark.regression
+def test_exchange_allows_available_balance_and_rejects_excess(
+    page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    silver_balance = get_user_profile(
+        playwright,
+        launch_params,
+    )["currencies"]["quants"]
+    amount_input = _open_exchange(page, launch_params)
+    submit = page.get_by_role(
+        "button",
+        name="Обменять",
+        exact=True,
+    )
+
+    assert 0 < silver_balance <= 1_000_000
+
+    amount_input.fill(str(silver_balance))
+    expect(submit).to_be_enabled()
+
+    amount_input.fill(str(silver_balance + 1))
+    expect(submit).to_be_disabled()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "viewport",
+    [
+        pytest.param({"width": 1280, "height": 720}, id="desktop"),
+        pytest.param({"width": 390, "height": 844}, id="vk-mini-app"),
+    ],
+)
+def test_exchange_primary_controls_fit_viewport(
+    page: Page,
+    viewport: dict[str, int],
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    page.set_viewport_size(viewport)
+    amount_input = _open_exchange(page, launch_params)
+
+    # TODO: replace icon locators when the controls receive accessible names.
+    controls = [
+        page.locator("button:has(svg.lucide-info)").first,
+        amount_input,
+        page.get_by_role("button", name="МАКС", exact=True),
+        page.get_by_role("button", name="Увеличить на 100"),
+        page.get_by_role("button", name="Уменьшить на 100"),
+        page.locator("button:has(svg.lucide-arrow-down-up)"),
+        page.get_by_role(
+            "group",
+            name="Допуск проскальзывания",
+        ),
+        page.get_by_role("button", name="Назад", exact=True),
+        page.get_by_role("button", name="Обменять", exact=True),
+    ]
+
+    for control in controls:
+        expect(control).to_be_visible()
+        expect(control).to_be_in_viewport()
+
+    for control in controls[:6]:
+        if control.is_enabled():
+            control.click(trial=True)

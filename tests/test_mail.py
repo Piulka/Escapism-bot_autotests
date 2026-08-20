@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
-from playwright.sync_api import Page, Playwright, Response, expect
+from playwright.sync_api import Locator, Page, Playwright, Response, expect
 
 from api_client import (
     delete_user_mail,
@@ -48,6 +48,30 @@ def _find_mail_by_title(
         for message in mail["items"]
         if message["title"] == title
     )
+
+
+def _open_mail_compose(page: Page, launch_params: str) -> None:
+    page.goto(get_required_env("BASE_URL") + launch_params)
+    page.get_by_label("Почта").click()
+    page.get_by_role(
+        "button",
+        name="Отправить",
+        exact=True,
+    ).first.click()
+    expect(
+        page.get_by_placeholder("Имя игрока")
+    ).to_be_visible()
+
+
+def _open_attachment_picker(page: Page) -> Locator:
+    page.get_by_role(
+        "button",
+        name="+ Добавить",
+        exact=True,
+    ).click()
+    picker = page.get_by_role("dialog", name="Выберите предмет")
+    expect(picker).to_be_visible()
+    return picker
 
 
 @pytest.mark.smoke
@@ -315,3 +339,189 @@ def test_send_and_claim_mail_attachments(
                 user_2_launch_params,
                 created_mail_id,
             )
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("recipient", "content"),
+    [
+        pytest.param("", "Проверка обязательного получателя", id="no-recipient"),
+        pytest.param(RECIPIENT_NAME, "", id="empty-mail"),
+    ],
+)
+def test_mail_disables_submit_when_required_data_is_missing(
+    page: Page,
+    recipient: str,
+    content: str,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _open_mail_compose(page, launch_params)
+
+    if recipient:
+        page.get_by_placeholder("Имя игрока").fill(recipient)
+    if content:
+        page.get_by_placeholder("Текст сообщения...").fill(content)
+
+    expect(
+        page.get_by_role(
+            "button",
+            name="Отправить",
+            exact=True,
+        ).last
+    ).to_be_disabled()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("recipient", "expected_error"),
+    [
+        pytest.param(
+            "Unknown recipient 12345",
+            "Игрок с таким именем не найден.",
+            id="unknown-recipient",
+        ),
+        pytest.param(
+            SENDER_NAME,
+            "Нельзя отправить письмо самому себе.",
+            id="self-recipient",
+        ),
+    ],
+)
+def test_mail_rejects_invalid_recipient(
+    page: Page,
+    recipient: str,
+    expected_error: str,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _open_mail_compose(page, launch_params)
+    page.get_by_placeholder("Имя игрока").fill(recipient)
+    page.get_by_placeholder("Текст сообщения...").fill(
+        "Проверка валидации получателя"
+    )
+
+    with page.expect_response(
+        lambda response: _is_mail_response(
+            response,
+            "/api/mail/send",
+        )
+    ) as send_response_info:
+        page.get_by_role(
+            "button",
+            name="Отправить",
+            exact=True,
+        ).last.click()
+
+    send_response = send_response_info.value
+    assert send_response.status == 400, (
+        f"Invalid recipient was not rejected: {send_response.text()}"
+    )
+    assert send_response.json() == {
+        "error": expected_error,
+        "code": "VALIDATION_ERROR",
+    }
+    expect(page.get_by_text(expected_error, exact=True)).to_be_visible()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "viewport",
+    [
+        pytest.param({"width": 1280, "height": 720}, id="desktop"),
+        pytest.param({"width": 390, "height": 844}, id="vk-mini-app"),
+    ],
+)
+def test_mail_compose_controls_are_actionable_in_viewport(
+    page: Page,
+    viewport: dict[str, int],
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    page.set_viewport_size(viewport)
+    _open_mail_compose(page, launch_params)
+
+    controls = [
+        page.get_by_placeholder("Имя игрока"),
+        page.get_by_placeholder("Тема письма"),
+        page.get_by_placeholder("Текст сообщения..."),
+        page.get_by_role("button", name="+ Добавить", exact=True),
+        page.get_by_role("button", name="Назад", exact=True),
+        page.get_by_role(
+            "button",
+            name="Отправить",
+            exact=True,
+        ).last,
+    ]
+
+    for control in controls:
+        control.scroll_into_view_if_needed()
+        expect(control).to_be_visible()
+        expect(control).to_be_in_viewport()
+        if control.is_enabled():
+            control.click(trial=True)
+
+
+@pytest.mark.regression
+def test_mail_limits_attachments_and_allows_removal(
+    page: Page,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _open_mail_compose(page, launch_params)
+    picker = _open_attachment_picker(page)
+
+    # TODO: replace positional cards with item-specific accessible names.
+    attachment_cards = picker.locator("div.aspect-square")
+    assert attachment_cards.count() >= 6
+    for index in range(5):
+        attachment_cards.nth(index).click()
+
+    expect(picker.get_by_text("Выбрано: 5 / 5", exact=True)).to_be_visible()
+    attachment_cards.nth(5).click()
+    expect(picker.get_by_text("Выбрано: 5 / 5", exact=True)).to_be_visible()
+
+    picker.get_by_role("button", name="Прикрепить").click()
+    expect(page.get_by_text("Вложения (5/5)", exact=True)).to_be_visible()
+
+    # TODO: add an accessible name containing the attached item name.
+    remove_buttons = page.locator("button:has(svg.lucide-trash2)")
+    expect(remove_buttons).to_have_count(5)
+    remove_buttons.first.click()
+
+    expect(page.get_by_text("Вложения (4/5)", exact=True)).to_be_visible()
+    expect(remove_buttons).to_have_count(4)
+
+
+@pytest.mark.regression
+def test_mail_changes_attachment_quantity_within_available_stack(
+    page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    inventory = get_user_inventory(playwright, launch_params)
+    item_index = next(
+        index
+        for index, item in enumerate(inventory)
+        if item["id"] == "food_raw_1"
+    )
+    available_quantity = inventory[item_index]["quantity"]
+
+    assert available_quantity >= 2
+    _open_mail_compose(page, launch_params)
+    picker = _open_attachment_picker(page)
+
+    # TODO: replace the API-derived position with an accessible item name.
+    picker.locator("div.aspect-square").nth(item_index).click()
+    picker.get_by_role("button", name="Прикрепить").click()
+
+    quantity = page.get_by_text(
+        f"x{available_quantity}",
+        exact=True,
+    )
+    expect(quantity).to_be_visible()
+    page.get_by_role("button", name="−", exact=True).click()
+    expect(
+        page.get_by_text(
+            f"x{available_quantity - 1}",
+            exact=True,
+        )
+    ).to_be_visible()
+    page.get_by_role("button", name="+", exact=True).click()
+    expect(quantity).to_be_visible()

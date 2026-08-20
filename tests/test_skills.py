@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, Playwright, Response
+from playwright.sync_api import Page, Playwright, Response, expect
 
 from api_client import get_required_env, get_user_profile
 
@@ -79,3 +79,49 @@ def test_level_up_sword_skill_with_learning_points(
         learning_points_before
         - XP_PER_CLICK * CLICKS_TO_LEVEL_ONE
     )
+
+
+@pytest.mark.regression
+def test_navigate_gathering_skill_tree_from_footer(
+    page: Page,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    page.goto(get_required_env("BASE_URL") + launch_params)
+
+    page.get_by_role(
+        "navigation",
+    ).get_by_role(
+        "button",
+        name="Навыки",
+        exact=True,
+    ).click()
+    expect(page.get_by_role("heading", name="Категории")).to_be_visible()
+
+    page.get_by_role(
+        "button",
+        name=re.compile(r"^Сбор\s+Изучено"),
+    ).click()
+    expect(page.get_by_role("heading", name="Сбор", level=2)).to_be_visible()
+
+    page.get_by_role(
+        "button",
+        name=re.compile(r"^Лесоруб\s+0%$"),
+    ).click()
+    expect(
+        page.get_by_role("heading", name="Лесоруб", level=2)
+    ).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Владение топором")
+    ).to_be_visible()
+    expect(
+        page.get_by_role("button", name="Учить (10 LP)")
+    ).to_be_visible()
+
+    page.get_by_role("button", name="Назад к списку").click()
+    expect(page.get_by_role("heading", name="Сбор", level=2)).to_be_visible()
+    expect(
+        page.get_by_role("button", name="Лесоруб", exact=False)
+    ).to_be_visible()
+
+    page.get_by_role("button", name="Назад к категориям").click()
+    expect(page.get_by_role("heading", name="Категории")).to_be_visible()
