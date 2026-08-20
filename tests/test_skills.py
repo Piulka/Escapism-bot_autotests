@@ -19,6 +19,16 @@ def _is_skill_inject_response(response: Response) -> bool:
     )
 
 
+def _open_skills_from_footer(page: Page, launch_params: str) -> None:
+    page.goto(get_required_env("BASE_URL") + launch_params)
+    page.get_by_role("navigation").get_by_role(
+        "button",
+        name="Навыки",
+        exact=True,
+    ).click()
+    expect(page.get_by_role("heading", name="Категории")).to_be_visible()
+
+
 @pytest.mark.smoke
 def test_level_up_sword_skill_with_learning_points(
     user_1_page: Page,
@@ -86,16 +96,7 @@ def test_navigate_gathering_skill_tree_from_footer(
     page: Page,
 ) -> None:
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
-    page.goto(get_required_env("BASE_URL") + launch_params)
-
-    page.get_by_role(
-        "navigation",
-    ).get_by_role(
-        "button",
-        name="Навыки",
-        exact=True,
-    ).click()
-    expect(page.get_by_role("heading", name="Категории")).to_be_visible()
+    _open_skills_from_footer(page, launch_params)
 
     page.get_by_role(
         "button",
@@ -125,3 +126,56 @@ def test_navigate_gathering_skill_tree_from_footer(
 
     page.get_by_role("button", name="Назад к категориям").click()
     expect(page.get_by_role("heading", name="Категории")).to_be_visible()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "viewport",
+    [
+        pytest.param({"width": 1280, "height": 720}, id="desktop"),
+        pytest.param({"width": 390, "height": 844}, id="vk-mini-app"),
+    ],
+)
+def test_skills_tree_controls_are_actionable_in_viewport(
+    page: Page,
+    viewport: dict[str, int],
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    page.set_viewport_size(viewport)
+    _open_skills_from_footer(page, launch_params)
+
+    category_buttons = [
+        page.get_by_role("button", name=re.compile(rf"^{category}\s+Изучено"))
+        for category in (
+            "Оружие",
+            "Броня",
+            "Сбор",
+            "Обработка",
+            "Ремесло",
+        )
+    ]
+    for category_button in category_buttons:
+        category_button.scroll_into_view_if_needed()
+        expect(category_button).to_be_visible()
+        expect(category_button).to_be_in_viewport()
+        category_button.click(trial=True)
+
+    category_buttons[2].click()
+    lumberjack = page.get_by_role(
+        "button",
+        name=re.compile(r"^Лесоруб\s+0%$"),
+    )
+    lumberjack.scroll_into_view_if_needed()
+    expect(lumberjack).to_be_in_viewport()
+    lumberjack.click()
+
+    branch_controls = [
+        page.get_by_role("button", name="Учить (10 LP)"),
+        page.get_by_role("button", name="Изучать"),
+        page.get_by_role("button", name="Назад к списку"),
+    ]
+    for control in branch_controls:
+        control.scroll_into_view_if_needed()
+        expect(control).to_be_visible()
+        expect(control).to_be_in_viewport()
+        control.click(trial=True)

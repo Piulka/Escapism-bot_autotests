@@ -31,6 +31,18 @@ def _is_post_response(response: Response, path: str) -> bool:
     )
 
 
+def _open_create_guild_dialog(page: Page, launch_params: str) -> Locator:
+    page.goto(get_required_env("BASE_URL") + launch_params)
+    page.get_by_label("Гильдия").click()
+    page.get_by_role(
+        "button",
+        name="Создать свою гильдию",
+    ).click()
+    dialog = page.get_by_role("dialog", name="Создание гильдии")
+    expect(dialog).to_be_visible()
+    return dialog
+
+
 def _reload_and_get_member(page: Page, name: str) -> Locator:
     page.reload()
     member_name = page.locator("#scroll-container").get_by_text(
@@ -330,3 +342,78 @@ def test_create_guild_accept_member_and_kick(
 
         if cleanup_error is not None:
             raise cleanup_error
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("guild_name", "guild_tag", "expected_error"),
+    [
+        pytest.param(
+            "",
+            "AB",
+            "Название гильдии: от 2 до 20 символов.",
+            id="empty-name",
+        ),
+        pytest.param(
+            "A",
+            "AB",
+            "Название гильдии: от 2 до 20 символов.",
+            id="short-name",
+        ),
+        pytest.param(
+            "Valid name",
+            "A",
+            "Тег: 2-4 латинские буквы или цифры (например, DAWN).",
+            id="short-tag",
+        ),
+        pytest.param(
+            "Valid name",
+            "A!",
+            "Тег: 2-4 латинские буквы или цифры (например, DAWN).",
+            id="invalid-tag-character",
+        ),
+    ],
+)
+def test_create_guild_rejects_invalid_name_and_tag(
+    page: Page,
+    guild_name: str,
+    guild_tag: str,
+    expected_error: str,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    dialog = _open_create_guild_dialog(page, launch_params)
+    dialog.get_by_placeholder(
+        "Например: Стражи Рассвета"
+    ).fill(guild_name)
+    dialog.get_by_placeholder("Например: DAWN").fill(guild_tag)
+
+    dialog.get_by_role(
+        "button",
+        name="Создать гильдию",
+    ).click()
+
+    expect(page.get_by_text(expected_error, exact=True)).to_be_visible()
+    expect(dialog).to_be_visible()
+
+
+@pytest.mark.regression
+def test_create_guild_normalizes_limits_and_cancel_keeps_state(
+    page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    assert get_user_guild(playwright, launch_params) == []
+    dialog = _open_create_guild_dialog(page, launch_params)
+    name_input = dialog.get_by_placeholder(
+        "Например: Стражи Рассвета"
+    )
+    tag_input = dialog.get_by_placeholder("Например: DAWN")
+
+    name_input.fill("A" * 21)
+    tag_input.fill("abcde")
+    expect(name_input).to_have_value("A" * 20)
+    expect(tag_input).to_have_value("ABCD")
+
+    dialog.get_by_role("button", name="Отмена").click()
+    expect(dialog).to_have_count(0)
+    assert get_user_guild(playwright, launch_params) == []
