@@ -38,3 +38,17 @@ def user_1_page(
         yield page
     finally:
         context.close()
+
+
+@pytest.fixture
+def user_2_page(
+    browser: Browser,
+    reset_user_2: None,
+) -> Generator[Page, None, None]:
+    context = browser.new_context()
+    page = context.new_page()
+
+    try:
+        yield page
+    finally:
+        context.close()

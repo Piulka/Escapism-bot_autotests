@@ -183,5 +183,7 @@ def test_exchange_gold_to_silver_and_back(
         "quants": silver_before,
         "fragments": gold_before - GOLD_TO_EXCHANGE + expected_gold,
     }
-    assert rate_after_second == rate_before
+    # The reverse exchange cannot restore the pool exactly: both operations
+    # charge a fee and integer currency amounts are rounded down.
+    assert abs(rate_after_second - rate_before) <= 1
     _expect_displayed_rate(user_1_page, rate_after_second)
