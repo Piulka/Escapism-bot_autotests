@@ -26,8 +26,10 @@
 
 ```text
 Escapism-bot_autotests/
+├── .github/workflows/tests.yml
 ├── tests/
 │   └── test_inventory.py
+├── api_client.py
 ├── .env.example
 ├── .gitignore
 ├── conftest.py
@@ -67,11 +69,15 @@ playwright install
 Создать файл `.env` на основе `.env.example`:
 
 ```env
-BASE_URL=
-API_URL=
-VK_LAUNCH_PARAMS_USER_1=
-VK_LAUNCH_PARAMS_USER_2=
+BASE_URL=https://example.com/
+API_URL=https://api.scripthub.ru/api/
+VK_LAUNCH_PARAMS_USER_1=?vk_user_id=...
+VK_LAUNCH_PARAMS_USER_2=?vk_user_id=...
 ```
+
+`API_URL` должен заканчиваться символом `/`, потому что API-клиент использует
+относительные пути эндпоинтов. VK launch params передаются полной query-строкой,
+включая ведущий `?`.
 
 Файл `.env` содержит данные авторизации тестовых пользователей и не должен попадать в Git.
 
@@ -112,6 +118,9 @@ API используется для:
 
 Перед выполнением теста пользователь сбрасывается в заранее известное состояние через API. Это позволяет сделать тесты независимыми и воспроизводимыми.
 
+Для сброса используется служебный endpoint `POST /api/v1/account/reset`. Он не входит
+в публичный контракт из `API_REFERENCE.md` и предназначен для тестовой подготовки.
+
 Данные авторизации VK хранятся в переменных окружения и не добавляются в репозиторий.
 
 ## Smoke-тесты
@@ -124,7 +133,18 @@ Smoke-набор предназначен для проверки основно
 - Навыки — изучение навыка и списание LP
 - Биржа — обмен валют
 - Почта — отправка предмета
+- Профиль — выбор титула, рамки, аватара и фона
 - Гильдия — создание, вступление, исключение участника и роспуск
+
+## CI
+
+Smoke-тесты запускаются в GitHub Actions на push и pull request. В настройках
+репозитория нужно создать Actions secrets:
+
+- `BASE_URL`
+- `API_URL`
+- `VK_LAUNCH_PARAMS_USER_1`
+- `VK_LAUNCH_PARAMS_USER_2`
 
 ## Статус проекта
 
