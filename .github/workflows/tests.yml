@@ -3,6 +3,11 @@ name: Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: escapism-smoke
+  cancel-in-progress: false
 
 jobs:
   smoke:
@@ -31,5 +36,25 @@ jobs:
       - name: Install Chromium
         run: playwright install --with-deps chromium
 
+      - name: Create report directory
+        run: mkdir -p reports
+
       - name: Run smoke tests
-        run: pytest -m smoke --browser chromium
+        run: >-
+          pytest -m smoke
+          --browser chromium
+          --tracing retain-on-failure
+          --screenshot only-on-failure
+          --html=reports/report.html
+          --self-contained-html
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-report-${{ github.run_number }}
+          path: |
+            reports/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
