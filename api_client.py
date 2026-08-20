@@ -239,6 +239,47 @@ def delete_user_mail(
         api_context.dispose()
 
 
+def send_user_mail(
+    playwright: Playwright,
+    launch_params: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post("mail/send", data=payload)
+        _assert_status(response, 200, "POST")
+        return response.json()
+    finally:
+        api_context.dispose()
+
+
+def claim_user_mail(
+    playwright: Playwright,
+    launch_params: str,
+    mail_id: str,
+) -> dict[str, Any]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "mail/claim",
+            data={"mailId": mail_id},
+        )
+        _assert_status(response, 200, "POST")
+        return response.json()
+    finally:
+        api_context.dispose()
+
+
 def get_user_guild(
     playwright: Playwright,
     launch_params: str,

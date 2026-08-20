@@ -6,10 +6,13 @@ import pytest
 from playwright.sync_api import Locator, Page, Playwright, Response, expect
 
 from api_client import (
+    claim_user_mail,
     delete_user_mail,
     get_required_env,
     get_user_inventory,
     get_user_mail,
+    reset_user,
+    send_user_mail,
 )
 
 
@@ -420,6 +423,106 @@ def test_mail_rejects_invalid_recipient(
         "code": "VALIDATION_ERROR",
     }
     expect(page.get_by_text(expected_error, exact=True)).to_be_visible()
+
+
+@pytest.mark.regression
+def test_repeated_mail_claim_does_not_duplicate_attachment(
+    user_2_page: Page,
+    reset_user_1: None,
+    playwright: Playwright,
+) -> None:
+    user_1_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    user_2_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    mail_title = f"Idempotent claim {uuid4().hex[:8]}"
+    item_id = "food_raw_1"
+    sent_quantity = 1
+    created_mail_id = None
+
+    sender_quantities = _inventory_quantities(
+        get_user_inventory(playwright, user_1_launch_params)
+    )
+    recipient_before = _inventory_quantities(
+        get_user_inventory(playwright, user_2_launch_params)
+    )
+    assert sender_quantities[item_id] >= sent_quantity
+
+    try:
+        assert send_user_mail(
+            playwright,
+            user_1_launch_params,
+            {
+                "to": RECIPIENT_NAME,
+                "title": mail_title,
+                "content": "Проверка повторного получения вложения",
+                "attachments": [
+                    {
+                        "type": "item",
+                        "itemId": item_id,
+                        "amount": sent_quantity,
+                    }
+                ],
+            },
+        ) == {"success": True}
+        created_mail = _find_mail_by_title(
+            get_user_mail(playwright, user_2_launch_params),
+            mail_title,
+        )
+        created_mail_id = created_mail["id"]
+
+        user_2_page.goto(
+            get_required_env("BASE_URL") + user_2_launch_params
+        )
+        user_2_page.get_by_label("Почта").click()
+        user_2_page.get_by_text(mail_title, exact=True).click()
+
+        with user_2_page.expect_response(
+            lambda response: _is_mail_response(
+                response,
+                "/api/mail/claim",
+            )
+        ) as first_claim_info:
+            user_2_page.get_by_role(
+                "button",
+                name="Забрать вложения",
+            ).click()
+
+        first_claim = first_claim_info.value
+        assert first_claim.status == 200, (
+            f"Mail claim failed: {first_claim.text()}"
+        )
+        expect(
+            user_2_page.get_by_role("button", name="Получено")
+        ).to_be_disabled()
+
+        inventory_after_first_claim = _inventory_quantities(
+            get_user_inventory(playwright, user_2_launch_params)
+        )
+        assert inventory_after_first_claim[item_id] == (
+            recipient_before[item_id] + sent_quantity
+        )
+
+        assert claim_user_mail(
+            playwright,
+            user_2_launch_params,
+            created_mail_id,
+        ) == {"success": True}
+        inventory_after_second_claim = _inventory_quantities(
+            get_user_inventory(playwright, user_2_launch_params)
+        )
+        assert inventory_after_second_claim == inventory_after_first_claim
+    finally:
+        if created_mail_id is not None:
+            delete_user_mail(
+                playwright,
+                user_2_launch_params,
+                created_mail_id,
+            )
+        reset_user(playwright, user_1_launch_params)
+        reset_user(playwright, user_2_launch_params)
 
 
 @pytest.mark.regression
