@@ -81,14 +81,15 @@ def reset_user(playwright: Playwright, launch_params: str) -> None:
 
     try:
         response = None
-        for attempt in range(5):
+        max_attempts = 8
+        for attempt in range(max_attempts):
             response = api_context.post("v1/account/reset")
             if response.status == 200:
                 break
             if response.status not in {502, 503, 504}:
                 break
-            if attempt < 4:
-                sleep(0.25)
+            if attempt < max_attempts - 1:
+                sleep(0.5)
         _assert_status(response, 200, "POST")
     finally:
         api_context.dispose()
@@ -105,9 +106,7 @@ def get_user_profile(
     )
 
     try:
-        response = api_context.get("v1/profile")
-        _assert_status(response, 200, "GET")
-        return response.json()
+        return _get_json_with_retry(api_context, "v1/profile")
     finally:
         api_context.dispose()
 
@@ -123,9 +122,7 @@ def get_exchange_pool(
     )
 
     try:
-        response = api_context.get("exchange/pool")
-        _assert_status(response, 200, "GET")
-        return response.json()
+        return _get_json_with_retry(api_context, "exchange/pool")
     finally:
         api_context.dispose()
 
@@ -141,9 +138,7 @@ def get_user_inventory(
     )
 
     try:
-        response = api_context.get("v1/inventory")
-        _assert_status(response, 200, "GET")
-        return response.json()
+        return _get_json_with_retry(api_context, "v1/inventory")
     finally:
         api_context.dispose()
 
@@ -186,6 +181,27 @@ def withdraw_warehouse_item(
         api_context.dispose()
 
 
+def unlock_inventory_item(
+    playwright: Playwright,
+    launch_params: str,
+    item_id: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "inventory/unlock",
+            data={"itemId": item_id},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
 def get_user_mail(
     playwright: Playwright,
     launch_params: str,
@@ -197,9 +213,10 @@ def get_user_mail(
     )
 
     try:
-        response = api_context.get("mail?page=1&limit=100")
-        _assert_status(response, 200, "GET")
-        return response.json()
+        return _get_json_with_retry(
+            api_context,
+            "mail?page=1&limit=100",
+        )
     finally:
         api_context.dispose()
 

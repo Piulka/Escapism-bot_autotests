@@ -15,6 +15,7 @@ from api_client import (
 GOLD_TO_EXCHANGE = 200
 FEE_RATE = 0.05
 REINVESTED_FEE_RATE = 0.5
+SLIPPAGE_TOLERANCE = 0.01
 
 
 def _is_exchange_response(response: Response) -> bool:
@@ -132,6 +133,9 @@ def test_exchange_gold_to_silver_and_back(
     assert first_exchange.request.post_data_json == {
         "from": "gold",
         "amountIn": GOLD_TO_EXCHANGE,
+        "minAmountOut": floor(
+            expected_silver * (1 - SLIPPAGE_TOLERANCE)
+        ),
     }
     assert first_exchange_data["amountOut"] == expected_silver
 
@@ -172,6 +176,9 @@ def test_exchange_gold_to_silver_and_back(
     assert second_exchange.request.post_data_json == {
         "from": "silver",
         "amountIn": expected_silver,
+        "minAmountOut": floor(
+            expected_gold * (1 - SLIPPAGE_TOLERANCE)
+        ),
     }
     assert second_exchange_data["amountOut"] == expected_gold
 

@@ -6,6 +6,11 @@ VK Mini App. Тесты воспроизводят пользовательск�
 
 Автотесты написаны на Python с использованием pytest и Playwright.
 
+План развития regression-покрытия и порядок реализации находятся в
+[`REGRESSION_ROADMAP.md`](REGRESSION_ROADMAP.md).
+Найденные дефекты и предложения по улучшению ведутся в
+[`QA_FINDINGS.md`](QA_FINDINGS.md).
+
 ## Технологии
 
 - Python 3.14
@@ -75,6 +80,8 @@ Escapism-bot_autotests/
 │   └── test_warehouse.py
 ├── api_client.py
 ├── API_REFERENCE.md
+├── REGRESSION_ROADMAP.md
+├── QA_FINDINGS.md
 ├── .env.example
 ├── .gitignore
 ├── conftest.py
@@ -265,6 +272,8 @@ pytest -m smoke --browser chromium
   по CSS-классу.
 - Строка участника гильдии не имеет button role или доступного имени и временно
   открывается кликом по тексту ника.
+- Кнопка фильтров инвентаря не имеет доступного имени и временно определяется по
+  классу `svg.lucide-funnel`.
 - `GET /api/guild` и `POST /api/guild/leave` на тестовом стенде периодически
   возвращают `502`; безопасные GET повторяются ограниченное число раз, а cleanup
   гильдии выполняется в best-effort режиме.
