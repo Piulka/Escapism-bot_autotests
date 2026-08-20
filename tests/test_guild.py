@@ -47,6 +47,17 @@ def _open_create_guild_dialog(page: Page, launch_params: str) -> Locator:
     return dialog
 
 
+def _open_recruitment_dialog(page: Page) -> Locator:
+    # TODO: replace the icon locator after UI-013 is fixed.
+    page.locator("button:has(svg.lucide-pen)").click()
+    dialog = page.get_by_role(
+        "dialog",
+        name="Редактировать текст набора",
+    )
+    expect(dialog).to_be_visible()
+    return dialog
+
+
 def _reload_and_get_member(page: Page, name: str) -> Locator:
     page.reload()
     member_name = page.locator("#scroll-container").get_by_text(
@@ -113,6 +124,40 @@ def _leave_guild_users(
 
     if cleanup_error is not None:
         raise cleanup_error
+
+
+def _create_guild_with_member(
+    playwright: Playwright,
+    leader_launch_params: str,
+    member_launch_params: str,
+    name_prefix: str,
+) -> str:
+    _leave_guild_users(
+        playwright,
+        member_launch_params,
+        leader_launch_params,
+    )
+    unique_value = uuid4().hex
+    guild_name = f"{name_prefix} {unique_value[:6]}"
+    create_user_guild(
+        playwright,
+        leader_launch_params,
+        guild_name,
+        unique_value[-4:].upper(),
+    )
+    guild = get_user_guild(playwright, leader_launch_params)
+    apply_to_guild(playwright, member_launch_params, guild["id"])
+    application = get_guild_applications(
+        playwright,
+        leader_launch_params,
+    )[0]
+    decide_guild_application(
+        playwright,
+        leader_launch_params,
+        application["id"],
+        "accept",
+    )
+    return guild_name
 
 
 @pytest.mark.smoke
@@ -637,6 +682,10 @@ def test_reject_reapply_accept_and_leave_guild(
 
 
 @pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-014: regular member sees recruitment edit control",
+    strict=True,
+)
 def test_regular_guild_member_cannot_use_leader_actions(
     user_2_page: Page,
     reset_user_1: None,
@@ -648,51 +697,17 @@ def test_regular_guild_member_cannot_use_leader_actions(
     user_2_launch_params = get_required_env(
         "VK_LAUNCH_PARAMS_USER_2"
     )
-    unique_value = uuid4().hex
-    guild_name = f"Roles {unique_value[:6]}"
-    guild_tag = unique_value[-4:].upper()
-
-    _leave_guild_users(
+    guild_name = _create_guild_with_member(
         playwright,
+        user_1_launch_params,
         user_2_launch_params,
-        user_1_launch_params,
-    )
-    create_user_guild(
-        playwright,
-        user_1_launch_params,
-        guild_name,
-        guild_tag,
+        "Roles",
     )
 
     try:
-        guild = get_user_guild(playwright, user_1_launch_params)
-        apply_to_guild(
-            playwright,
-            user_2_launch_params,
-            guild["id"],
-        )
-        application = get_guild_applications(
-            playwright,
-            user_1_launch_params,
-        )[0]
-        decide_guild_application(
-            playwright,
-            user_1_launch_params,
-            application["id"],
-            "accept",
-        )
-
         member_guild = get_user_guild(
             playwright,
             user_2_launch_params,
-        )
-        members_before = get_guild_members(
-            playwright,
-            user_2_launch_params,
-        )
-        leader = next(
-            member for member in members_before
-            if member["role"] == "leader"
         )
         assert member_guild["myRole"] == "member"
 
@@ -708,9 +723,44 @@ def test_regular_guild_member_cannot_use_leader_actions(
             user_2_page.get_by_role("button", name=re.compile(r"^Заявки"))
         ).to_have_count(0)
         expect(
-            user_2_page.locator("button:has(svg.lucide-pencil)")
+            user_2_page.locator("button:has(svg.lucide-pen)")
         ).to_have_count(0)
+    finally:
+        _leave_guild_users(
+            playwright,
+            user_2_launch_params,
+            user_1_launch_params,
+        )
 
+
+@pytest.mark.regression
+def test_regular_guild_member_cannot_kick_through_api(
+    reset_user_1: None,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    user_1_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    user_2_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    _create_guild_with_member(
+        playwright,
+        user_1_launch_params,
+        user_2_launch_params,
+        "API roles",
+    )
+
+    try:
+        members_before = get_guild_members(
+            playwright,
+            user_2_launch_params,
+        )
+        leader = next(
+            member for member in members_before
+            if member["role"] == "leader"
+        )
         kick_status, kick_body = attempt_kick_guild_member(
             playwright,
             user_2_launch_params,
@@ -731,3 +781,104 @@ def test_regular_guild_member_cannot_use_leader_actions(
             user_2_launch_params,
             user_1_launch_params,
         )
+
+
+@pytest.mark.regression
+def test_cancel_and_save_guild_recruitment_text(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    unique_value = uuid4().hex
+    guild_name = f"Recruit {unique_value[:6]}"
+    recruitment_text = f"Набор активных игроков {unique_value[:8]}"
+
+    _leave_guild_if_present(playwright, launch_params)
+    create_user_guild(
+        playwright,
+        launch_params,
+        guild_name,
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params + "#/guild"
+        )
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+
+        dialog = _open_recruitment_dialog(user_1_page)
+        textarea = dialog.get_by_placeholder("Введите текст объявления...")
+        textarea.fill("Этот текст не должен сохраниться")
+        dialog.get_by_role("button", name="Отмена").click()
+        expect(dialog).to_have_count(0)
+        assert get_user_guild(playwright, launch_params)[
+            "recruitmentText"
+        ] == ""
+
+        dialog = _open_recruitment_dialog(user_1_page)
+        textarea = dialog.get_by_placeholder("Введите текст объявления...")
+        textarea.fill(recruitment_text)
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/recruitment",
+            )
+        ) as save_info:
+            dialog.get_by_role("button", name="Сохранить").click()
+
+        save_response = save_info.value
+        assert save_response.status == 200, (
+            f"Recruitment update failed: {save_response.text()}"
+        )
+        assert save_response.request.post_data_json == {
+            "text": recruitment_text,
+        }
+        expect(dialog).to_have_count(0)
+        expect(
+            user_1_page.locator("p").filter(has_text=recruitment_text)
+        ).to_be_visible()
+        assert get_user_guild(playwright, launch_params)[
+            "recruitmentText"
+        ] == recruitment_text
+    finally:
+        _leave_guild_if_present(playwright, launch_params)
+
+
+@pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-012: recruitment textarea truncates documented 500 chars to 250",
+    strict=True,
+)
+def test_guild_recruitment_accepts_documented_500_character_limit(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    unique_value = uuid4().hex
+    guild_name = f"Limit {unique_value[:6]}"
+    documented_limit_text = "A" * 500
+
+    _leave_guild_if_present(playwright, launch_params)
+    create_user_guild(
+        playwright,
+        launch_params,
+        guild_name,
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params + "#/guild"
+        )
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        dialog = _open_recruitment_dialog(user_1_page)
+        textarea = dialog.get_by_placeholder("Введите текст объявления...")
+        textarea.fill(documented_limit_text)
+        expect(textarea).to_have_value(documented_limit_text)
+    finally:
+        _leave_guild_if_present(playwright, launch_params)
