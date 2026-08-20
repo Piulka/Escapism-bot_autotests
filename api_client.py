@@ -296,6 +296,28 @@ def get_user_guild(
         api_context.dispose()
 
 
+def create_user_guild(
+    playwright: Playwright,
+    launch_params: str,
+    name: str,
+    tag: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/create",
+            data={"name": name, "tag": tag},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
 def get_guild_members(
     playwright: Playwright,
     launch_params: str,

@@ -12,6 +12,7 @@ from playwright.sync_api import (
 )
 
 from api_client import (
+    create_user_guild,
     get_guild_applications,
     get_guild_members,
     get_required_env,
@@ -452,3 +453,173 @@ def test_create_guild_controls_are_actionable_in_viewport(
 
     for button_name in ("Отмена", "Создать гильдию"):
         dialog.get_by_role("button", name=button_name).click(trial=True)
+
+
+@pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-011: rejected guild application remains submitted in catalog",
+    strict=True,
+)
+def test_reject_reapply_accept_and_leave_guild(
+    user_1_page: Page,
+    user_2_page: Page,
+    playwright: Playwright,
+) -> None:
+    user_1_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    user_2_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    unique_value = uuid4().hex
+    guild_name = f"Regression {unique_value[:6]}"
+    guild_tag = unique_value[-4:].upper()
+
+    _leave_guild_if_present(playwright, user_2_launch_params)
+    _leave_guild_if_present(playwright, user_1_launch_params)
+    create_user_guild(
+        playwright,
+        user_1_launch_params,
+        guild_name,
+        guild_tag,
+    )
+
+    try:
+        guild_heading = _open_guild_catalog_until_visible(
+            user_2_page,
+            user_2_launch_params,
+            guild_name,
+        )
+        guild_card = guild_heading.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+
+        with user_2_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/join",
+            )
+        ) as first_join_info:
+            guild_card.get_by_role(
+                "button",
+                name="Подать заявку",
+            ).click()
+        assert first_join_info.value.status == 200
+
+        first_application = get_guild_applications(
+            playwright,
+            user_1_launch_params,
+        )[0]
+        applicant = _open_applications_until_visible(
+            user_1_page,
+            user_1_launch_params,
+            MEMBER_NAME,
+        )
+        application_card = applicant.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+        reject_path = (
+            f"/api/guild/applications/{first_application['id']}/reject"
+        )
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(response, reject_path)
+        ) as reject_info:
+            application_card.get_by_role(
+                "button",
+                name="Отклонить",
+            ).click()
+        assert reject_info.value.status == 200
+        expect(applicant).to_have_count(0)
+        assert get_guild_applications(
+            playwright,
+            user_1_launch_params,
+        ) == []
+
+        guild_heading = _open_guild_catalog_until_visible(
+            user_2_page,
+            user_2_launch_params,
+            guild_name,
+        )
+        guild_card = guild_heading.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+        reapply_button = guild_card.get_by_role(
+            "button",
+            name="Подать заявку",
+        )
+        expect(reapply_button).to_be_visible(timeout=5_000)
+        with user_2_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/join",
+            )
+        ) as second_join_info:
+            reapply_button.click()
+        assert second_join_info.value.status == 200
+
+        second_application = get_guild_applications(
+            playwright,
+            user_1_launch_params,
+        )[0]
+        applicant = _open_applications_until_visible(
+            user_1_page,
+            user_1_launch_params,
+            MEMBER_NAME,
+        )
+        application_card = applicant.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+        accept_path = (
+            f"/api/guild/applications/{second_application['id']}/accept"
+        )
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(response, accept_path)
+        ) as accept_info:
+            application_card.get_by_role(
+                "button",
+                name="Принять",
+            ).click()
+        assert accept_info.value.status == 200
+        assert {member["name"] for member in get_guild_members(
+            playwright,
+            user_1_launch_params,
+        )} == {LEADER_NAME, MEMBER_NAME}
+
+        user_2_page.goto(
+            get_required_env("BASE_URL") + user_2_launch_params + "#/guild"
+        )
+        expect(
+            user_2_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        user_2_page.get_by_role(
+            "button",
+            name="Покинуть гильдию",
+        ).click()
+        with user_2_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/leave",
+            )
+        ) as leave_info:
+            user_2_page.get_by_role(
+                "button",
+                name="Да, покинуть",
+            ).click()
+        assert leave_info.value.status == 200
+        assert get_user_guild(playwright, user_2_launch_params) == []
+        assert {member["name"] for member in get_guild_members(
+            playwright,
+            user_1_launch_params,
+        )} == {LEADER_NAME}
+    finally:
+        cleanup_error = None
+        for launch_params in (
+            user_2_launch_params,
+            user_1_launch_params,
+        ):
+            try:
+                _leave_guild_if_present(playwright, launch_params)
+            except Exception as error:
+                cleanup_error = cleanup_error or error
+        if cleanup_error is not None:
+            raise cleanup_error
