@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -18,6 +18,7 @@ from api_client import (
     decide_guild_application,
     get_guild_applications,
     get_guild_members,
+    get_guild_technologies,
     get_required_env,
     get_user_guild,
     leave_guild,
@@ -880,5 +881,177 @@ def test_guild_recruitment_accepts_documented_500_character_limit(
         textarea = dialog.get_by_placeholder("Введите текст объявления...")
         textarea.fill(documented_limit_text)
         expect(textarea).to_have_value(documented_limit_text)
+    finally:
+        _leave_guild_if_present(playwright, launch_params)
+
+
+@pytest.mark.regression
+def test_guild_catalog_details_and_leader_vk_link(
+    user_2_page: Page,
+    reset_user_1: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    visitor_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    unique_value = uuid4().hex
+    guild_name = f"Catalog {unique_value[:6]}"
+    guild_tag = unique_value[-4:].upper()
+
+    _leave_guild_users(
+        playwright,
+        visitor_launch_params,
+        leader_launch_params,
+    )
+    create_user_guild(
+        playwright,
+        leader_launch_params,
+        guild_name,
+        guild_tag,
+    )
+
+    try:
+        guild = get_user_guild(playwright, leader_launch_params)
+        members = get_guild_members(playwright, leader_launch_params)
+        guild_heading = _open_guild_catalog_until_visible(
+            user_2_page,
+            visitor_launch_params,
+            guild_name,
+        )
+        guild_card = guild_heading.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+        expect(guild_card).to_contain_text(f"[{guild_tag}]")
+        expect(guild_card).to_contain_text(guild["leaderName"])
+        expect(guild_card).to_contain_text(str(len(members)))
+
+        guild_card.get_by_role("button", name="Подробнее").click()
+        dialog = user_2_page.get_by_role(
+            "dialog",
+            name=f"{guild_name} [{guild_tag}]",
+        )
+        expect(dialog).to_be_visible()
+        expect(dialog).to_contain_text(guild["leaderName"])
+        expect(dialog).to_contain_text(f"Участников:\n{len(members)}")
+        expect(dialog).to_contain_text(
+            re.compile(r"Состав гильдии", re.IGNORECASE)
+        )
+
+        leader_vk_id = parse_qs(
+            urlsplit(leader_launch_params).query
+        )["vk_user_id"][0]
+        vk_links = dialog.get_by_title("Страница главы ВКонтакте")
+        expect(vk_links).to_have_count(2)
+        for index in range(vk_links.count()):
+            vk_link = vk_links.nth(index)
+            expect(vk_link).to_have_attribute(
+                "href",
+                f"https://vk.com/id{leader_vk_id}",
+            )
+            expect(vk_link).to_have_attribute("target", "_blank")
+            expect(vk_link).to_have_attribute(
+                "rel",
+                "noopener noreferrer",
+            )
+
+        dialog.get_by_role("button", name="Закрыть").click()
+        expect(dialog).to_have_count(0)
+    finally:
+        _leave_guild_if_present(playwright, leader_launch_params)
+
+
+@pytest.mark.regression
+def test_guild_technologies_list_scroll_and_back_navigation(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    unique_value = uuid4().hex
+    guild_name = f"Tech {unique_value[:6]}"
+
+    _leave_guild_if_present(playwright, launch_params)
+    create_user_guild(
+        playwright,
+        launch_params,
+        guild_name,
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        technologies = get_guild_technologies(playwright, launch_params)
+        assert technologies
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params + "#/guild"
+        )
+        user_1_page.get_by_role("button", name="Технологии").click()
+        expect(
+            user_1_page.get_by_role(
+                "heading",
+                name="Технологии гильдии",
+            )
+        ).to_be_visible()
+
+        for technology in technologies:
+            technology_heading = user_1_page.get_by_role(
+                "heading",
+                name=technology["name"],
+            )
+            technology_heading.scroll_into_view_if_needed()
+            expect(technology_heading).to_be_visible()
+
+        back_button = user_1_page.get_by_role(
+            "button",
+            name="Назад в меню",
+        )
+        back_button.scroll_into_view_if_needed()
+        expect(back_button).to_be_in_viewport()
+        back_button.click()
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+    finally:
+        _leave_guild_if_present(playwright, launch_params)
+
+
+@pytest.mark.regression
+@pytest.mark.xfail(
+    reason="UI-015: guild technology details button is covered by card",
+    strict=True,
+)
+def test_guild_technology_details_button_opens_dialog(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    unique_value = uuid4().hex
+
+    _leave_guild_if_present(playwright, launch_params)
+    create_user_guild(
+        playwright,
+        launch_params,
+        f"Details {unique_value[:6]}",
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        technology = get_guild_technologies(playwright, launch_params)[0]
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params + "#/guild"
+        )
+        user_1_page.get_by_role("button", name="Технологии").click()
+        technology_card = user_1_page.get_by_role(
+            "heading",
+            name=technology["name"],
+        ).locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-xl')][1]"
+        )
+        technology_card.get_by_role(
+            "button",
+            name="Детали",
+        ).click(timeout=5_000)
+        expect(user_1_page.get_by_role("dialog")).to_be_visible()
     finally:
         _leave_guild_if_present(playwright, launch_params)

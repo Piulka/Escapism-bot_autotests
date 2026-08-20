@@ -397,6 +397,22 @@ def get_guild_members(
         api_context.dispose()
 
 
+def get_guild_technologies(
+    playwright: Playwright,
+    launch_params: str,
+) -> list[dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        return _get_json(api_context, "guild/techs")
+    finally:
+        api_context.dispose()
+
+
 def get_guild_applications(
     playwright: Playwright,
     launch_params: str,
