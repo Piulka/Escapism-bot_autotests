@@ -77,3 +77,21 @@ def get_user_profile(
         return response.json()
     finally:
         api_context.dispose()
+
+
+def get_exchange_pool(
+    playwright: Playwright,
+    launch_params: str,
+) -> dict[str, int]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.get("exchange/pool")
+        _assert_status(response, 200, "GET")
+        return response.json()
+    finally:
+        api_context.dispose()
