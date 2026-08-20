@@ -148,6 +148,44 @@ def get_user_inventory(
         api_context.dispose()
 
 
+def get_user_warehouse(
+    playwright: Playwright,
+    launch_params: str,
+) -> list[dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        return _get_json_with_retry(api_context, "warehouse")
+    finally:
+        api_context.dispose()
+
+
+def withdraw_warehouse_item(
+    playwright: Playwright,
+    launch_params: str,
+    item_id: str,
+    quantity: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "warehouse/withdraw",
+            data={"itemId": item_id, "quantity": quantity},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
 def get_user_mail(
     playwright: Playwright,
     launch_params: str,
