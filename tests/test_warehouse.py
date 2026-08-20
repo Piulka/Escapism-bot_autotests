@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, Playwright, Response
+from playwright.sync_api import Page, Playwright, Response, expect
 
 from api_client import (
     get_required_env,
@@ -176,3 +176,49 @@ def test_deposit_item_to_warehouse_and_withdraw_it(
                 ITEM_ID,
                 TRANSFER_QUANTITY,
             )
+
+
+@pytest.mark.regression
+def test_cancel_warehouse_transfer_keeps_item_quantities(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    inventory_before = get_user_inventory(playwright, launch_params)
+    warehouse_before = get_user_warehouse(playwright, launch_params)
+
+    user_1_page.goto(
+        get_required_env("BASE_URL") + launch_params
+    )
+    user_1_page.get_by_role(
+        "button",
+        name="Сумка",
+        exact=True,
+    ).click()
+    user_1_page.get_by_label(ITEM_NAME, exact=True).click()
+    user_1_page.get_by_role(
+        "button",
+        name="На склад",
+    ).click()
+
+    quantity_input = user_1_page.get_by_label("Количество")
+    transfer_dialog = quantity_input.locator(
+        "xpath=ancestor::*[@role='dialog'][1]"
+    )
+    expect(transfer_dialog).to_be_visible()
+    quantity_input.fill(str(TRANSFER_QUANTITY))
+    transfer_dialog.get_by_role(
+        "button",
+        name="Отмена",
+        exact=True,
+    ).click()
+
+    expect(transfer_dialog).to_have_count(0)
+    assert _item_quantity(
+        get_user_inventory(playwright, launch_params),
+        ITEM_ID,
+    ) == _item_quantity(inventory_before, ITEM_ID)
+    assert _item_quantity(
+        get_user_warehouse(playwright, launch_params),
+        ITEM_ID,
+    ) == _item_quantity(warehouse_before, ITEM_ID)

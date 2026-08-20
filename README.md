@@ -48,7 +48,7 @@ VK Mini App. Тесты воспроизводят пользовательск�
 
 - Создание гильдии и подача заявки вторым пользователем
 - Принятие заявки, проверка состава и исключение участника
-- Проверка членства обоих пользователей через API
+- Проверка состава через API и состояния второго пользователя через UI
 
 ### Личный склад
 
@@ -72,6 +72,8 @@ Escapism-bot_autotests/
 │       └── tests.yml
 ├── tests/
 │   ├── test_inventory.py
+│   ├── test_inventory_item_actions.py
+│   ├── test_inventory_regression.py
 │   ├── test_consumables.py
 │   ├── test_skills.py
 │   ├── test_exchange.py
@@ -95,7 +97,9 @@ Escapism-bot_autotests/
 - `conftest.py` — fixtures сброса пользователей и изолированные страницы
   USER_1/USER_2;
 - `API_REFERENCE.md` — локальная документация API приложения;
-- `tests/` — независимые smoke-сценарии, сгруппированные по функциональности.
+- `tests/` — независимые smoke- и regression-сценарии, сгруппированные по
+  функциональности; реализованные и запланированные regression-проверки
+  перечислены в `REGRESSION_ROADMAP.md`.
 
 ## Установка
 
@@ -152,6 +156,12 @@ pytest
 
 ```powershell
 pytest -m smoke
+```
+
+Запустить только regression-тесты:
+
+```powershell
+pytest -m regression
 ```
 
 По умолчанию Chromium запускается в headless-режиме. Видимое окно браузера

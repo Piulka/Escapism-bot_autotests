@@ -18,7 +18,9 @@
   `GET /api/guild/members`, `GET /api/guild/applications`,
   `POST /api/v1/account/reset`, `POST /api/guild/leave`
 - Наблюдение: endpoint может возвращать `502 Bad Gateway` несколько раз подряд
-  после успешной UI-операции или во время setup/cleanup.
+  после успешной UI-операции или во время setup/cleanup. В UI это также
+  воспроизводится экраном `Не удалось загрузить данные → Повторить` при открытии
+  каталога гильдий сразу после успешного создания.
 - Влияние: корректный пользовательский сценарий становится красным из-за
   недоступности проверки или teardown; полный прогон заметно замедляется.
 - Workaround: ограниченный retry только для безопасных GET и idempotent reset;
@@ -60,12 +62,14 @@
 - Влияние: screen reader не объясняет действие; тест использует CSS-класс иконки.
 - Ожидание: добавить `aria-label="Фильтры"`.
 
-### UI-002 — Equipment slot головы не имеет стабильного locator
+### UI-002 — Equipment slots не имеют стабильных locator
 
 - Тип: accessibility / testability
 - Приоритет: P2
 - Статус: Confirmed
-- Наблюдение: smoke-тест временно использует `locator("svg").nth(3)`.
+- Наблюдение: все 8 equipment slots реализованы как кликабельные `div` без
+  `role`, `aria-label` и `data-testid`; smoke-тест временно использует
+  `locator("svg").nth(3)` для слота головы.
 - Влияние: изменение порядка SVG может сломать тест без изменения функции.
 - Ожидание: accessible button name или `data-testid` с ключом equipment slot.
 

@@ -1,12 +1,17 @@
+import re
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, Playwright, Response, expect
+from playwright.sync_api import Locator, Page, Playwright, Response, expect
 
 from api_client import (
     get_required_env,
     get_user_inventory,
+    get_user_profile,
+    get_user_warehouse,
+    unequip_inventory_item,
     unlock_inventory_item,
+    withdraw_warehouse_item,
 )
 
 
@@ -27,6 +32,255 @@ def _get_item(playwright: Playwright, launch_params: str) -> dict:
         for item in get_user_inventory(playwright, launch_params)
         if item["id"] == ITEM_ID
     )
+
+
+def _has_item(items: list[dict], item_id: str) -> bool:
+    return any(item["id"] == item_id for item in items)
+
+
+def _get_main_hand_slot(page: Page) -> Locator:
+    # TODO: replace with data-testid="equipment-slot-mainHand" or an
+    # accessible name. Equipment slots are currently unnamed clickable divs.
+    equipment_slots = page.locator(
+        "div.w-12.h-12.rounded-xl.border.flex"
+    )
+    return equipment_slots.nth(6)
+
+
+@pytest.mark.regression
+def test_equip_item_through_equipment_slot(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    equipped = False
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params
+        )
+        user_1_page.get_by_role(
+            "button",
+            name="Сумка",
+            exact=True,
+        ).click()
+
+        _get_main_hand_slot(user_1_page).click()
+        item_picker = user_1_page.get_by_role(
+            "dialog",
+            name="Выбор: Правая рука",
+        )
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/inventory/equip",
+            )
+        ) as equip_response_info:
+            item_picker.get_by_role(
+                "button",
+                name=ITEM_NAME,
+                exact=True,
+            ).click()
+
+        equip_response = equip_response_info.value
+
+        assert equip_response.status == 200, (
+            f"Item equip failed: {equip_response.text()}"
+        )
+        assert equip_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+            "slotKey": "mainHand",
+        }
+        equipped = True
+
+        profile = get_user_profile(playwright, launch_params)
+        assert profile["equipment"]["mainHand"]["id"] == ITEM_ID
+    finally:
+        if equipped:
+            unequip_inventory_item(
+                playwright,
+                launch_params,
+                "mainHand",
+            )
+
+
+@pytest.mark.regression
+def test_move_item_between_inventory_warehouse_and_equipment(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    item_location = "inventory"
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params
+        )
+        user_1_page.get_by_role(
+            "button",
+            name="Сумка",
+            exact=True,
+        ).click()
+        user_1_page.get_by_role(
+            "button",
+            name=ITEM_NAME,
+            exact=True,
+        ).click()
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/warehouse/deposit",
+            )
+        ) as deposit_response_info:
+            user_1_page.get_by_role(
+                "button",
+                name="На склад",
+                exact=True,
+            ).click()
+
+        deposit_response = deposit_response_info.value
+        item_location = "warehouse"
+        assert deposit_response.status == 200, (
+            f"Warehouse deposit failed: {deposit_response.text()}"
+        )
+        assert deposit_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+            "quantity": 1,
+        }
+        assert not _has_item(
+            get_user_inventory(playwright, launch_params),
+            ITEM_ID,
+        )
+        assert _has_item(
+            get_user_warehouse(playwright, launch_params),
+            ITEM_ID,
+        )
+
+        user_1_page.keyboard.press("Escape")
+        user_1_page.get_by_role(
+            "button",
+            name=re.compile(r"^Склад"),
+        ).click()
+        user_1_page.get_by_role(
+            "button",
+            name=ITEM_NAME,
+            exact=True,
+        ).click()
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/inventory/equip",
+            )
+        ) as equip_response_info:
+            user_1_page.get_by_role(
+                "button",
+                name="Надеть",
+                exact=True,
+            ).click()
+
+        equip_response = equip_response_info.value
+        item_location = "equipment"
+        assert equip_response.status == 200, (
+            f"Equip from warehouse failed: {equip_response.text()}"
+        )
+        assert equip_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+            "slotKey": "mainHand",
+        }
+        assert not _has_item(
+            get_user_warehouse(playwright, launch_params),
+            ITEM_ID,
+        )
+        assert (
+            get_user_profile(playwright, launch_params)["equipment"]
+            ["mainHand"]["id"]
+            == ITEM_ID
+        )
+
+        _get_main_hand_slot(user_1_page).click()
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/warehouse/deposit",
+            )
+        ) as equipped_deposit_response_info:
+            user_1_page.get_by_role(
+                "button",
+                name="На склад",
+                exact=True,
+            ).click()
+
+        equipped_deposit_response = equipped_deposit_response_info.value
+        item_location = "warehouse"
+        assert equipped_deposit_response.status == 200, (
+            "Equipped item deposit failed: "
+            f"{equipped_deposit_response.text()}"
+        )
+        assert equipped_deposit_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+            "quantity": 1,
+        }
+        assert (
+            get_user_profile(playwright, launch_params)["equipment"]
+            ["mainHand"]
+            is None
+        )
+        assert _has_item(
+            get_user_warehouse(playwright, launch_params),
+            ITEM_ID,
+        )
+
+        user_1_page.get_by_role(
+            "button",
+            name=ITEM_NAME,
+            exact=True,
+        ).click()
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/warehouse/withdraw",
+            )
+        ) as withdraw_response_info:
+            user_1_page.get_by_role(
+                "button",
+                name="В сумку",
+                exact=True,
+            ).click()
+
+        withdraw_response = withdraw_response_info.value
+        item_location = "inventory"
+        assert withdraw_response.status == 200, (
+            f"Warehouse withdrawal failed: {withdraw_response.text()}"
+        )
+        assert withdraw_response.request.post_data_json == {
+            "itemId": ITEM_ID,
+            "quantity": 1,
+        }
+        assert _has_item(
+            get_user_inventory(playwright, launch_params),
+            ITEM_ID,
+        )
+        assert not _has_item(
+            get_user_warehouse(playwright, launch_params),
+            ITEM_ID,
+        )
+    finally:
+        if item_location == "equipment":
+            unequip_inventory_item(
+                playwright,
+                launch_params,
+                "mainHand",
+            )
+        elif item_location == "warehouse":
+            withdraw_warehouse_item(
+                playwright,
+                launch_params,
+                ITEM_ID,
+                1,
+            )
 
 
 @pytest.mark.regression
