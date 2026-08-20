@@ -318,6 +318,98 @@ def test_exchange_allows_available_balance_and_rejects_excess(
 
 
 @pytest.mark.regression
+def test_exchange_double_submit_creates_only_one_transaction(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    profile_before = get_user_profile(playwright, launch_params)
+    pool_before = get_exchange_pool(playwright, launch_params)
+    silver_before = profile_before["currencies"]["quants"]
+    gold_before = profile_before["currencies"]["fragments"]
+    expected_silver = _calculate_amount_out(
+        reserve_in=pool_before["goldReserve"],
+        reserve_out=pool_before["silverReserve"],
+        amount_in=GOLD_TO_EXCHANGE,
+    )
+    exchange_requests = []
+
+    assert gold_before >= GOLD_TO_EXCHANGE
+    amount_input = _open_exchange(user_1_page, launch_params)
+    user_1_page.locator(
+        "button:has(svg.lucide-arrow-down-up)"
+    ).click()
+    amount_input.fill(str(GOLD_TO_EXCHANGE))
+    user_1_page.on(
+        "request",
+        lambda request: exchange_requests.append(request)
+        if request.method == "POST"
+        and urlsplit(request.url).path == "/api/exchange"
+        else None,
+    )
+
+    profile_after_submit = None
+    first_response = None
+    submit_request_count = None
+    try:
+        with user_1_page.expect_response(
+            _is_exchange_response,
+        ) as exchange_info:
+            user_1_page.get_by_role(
+                "button",
+                name="Обменять",
+                exact=True,
+            ).dblclick()
+
+        first_response = exchange_info.value
+        user_1_page.wait_for_timeout(500)
+        profile_after_submit = get_user_profile(
+            playwright,
+            launch_params,
+        )
+        submit_request_count = len(exchange_requests)
+    finally:
+        profile_before_cleanup = get_user_profile(
+            playwright,
+            launch_params,
+        )
+        silver_to_return = (
+            profile_before_cleanup["currencies"]["quants"]
+            - silver_before
+        )
+        if silver_to_return > 0:
+            amount_input = _open_exchange(user_1_page, launch_params)
+            amount_input.fill(str(silver_to_return))
+            with user_1_page.expect_response(
+                _is_exchange_response,
+            ) as cleanup_info:
+                user_1_page.get_by_role(
+                    "button",
+                    name="Обменять",
+                    exact=True,
+                ).click()
+            cleanup_response = cleanup_info.value
+            assert cleanup_response.status == 200, (
+                f"Exchange cleanup failed: {cleanup_response.text()}"
+            )
+
+    assert first_response is not None
+    assert profile_after_submit is not None
+    assert submit_request_count is not None
+    assert first_response.status == 200, (
+        f"Exchange failed: {first_response.text()}"
+    )
+    assert submit_request_count == 1, (
+        "Double click sent more than one exchange request: "
+        f"{submit_request_count}"
+    )
+    assert profile_after_submit["currencies"] == {
+        "quants": silver_before + expected_silver,
+        "fragments": gold_before - GOLD_TO_EXCHANGE,
+    }
+
+
+@pytest.mark.regression
 @pytest.mark.parametrize(
     "viewport",
     [
