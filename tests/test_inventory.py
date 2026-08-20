@@ -1,12 +1,12 @@
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Playwright, Response
+from playwright.sync_api import Page, Playwright, Response
 
 from api_client import get_required_env, get_user_profile
 
 
-def is_post_response(response: Response, path: str) -> bool:
+def _is_post_response(response: Response, path: str) -> bool:
     return (
         response.request.method == "POST"
         and urlsplit(response.url).path == path
@@ -15,9 +15,9 @@ def is_post_response(response: Response, path: str) -> bool:
 
 @pytest.mark.smoke
 def test_equip_and_unequip_item(
-    user_1_page,
-    playwright: Playwright
-):
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
     base_url = get_required_env("BASE_URL")
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
 
@@ -36,7 +36,7 @@ def test_equip_and_unequip_item(
     item.click()
 
     with user_1_page.expect_response(
-        lambda response: is_post_response(
+        lambda response: _is_post_response(
             response,
             "/api/inventory/equip",
         )
@@ -63,7 +63,7 @@ def test_equip_and_unequip_item(
     user_1_page.locator("svg").nth(3).click()
 
     with user_1_page.expect_response(
-        lambda response: is_post_response(
+        lambda response: _is_post_response(
             response,
             "/api/inventory/unequip",
         )
