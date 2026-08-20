@@ -376,11 +376,13 @@ def test_create_guild_accept_member_and_kick(
 )
 def test_create_guild_rejects_invalid_name_and_tag(
     page: Page,
+    playwright: Playwright,
     guild_name: str,
     guild_tag: str,
     expected_error: str,
 ) -> None:
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _leave_guild_if_present(playwright, launch_params)
     dialog = _open_create_guild_dialog(page, launch_params)
     dialog.get_by_placeholder(
         "Например: Стражи Рассвета"
@@ -402,7 +404,7 @@ def test_create_guild_normalizes_limits_and_cancel_keeps_state(
     playwright: Playwright,
 ) -> None:
     launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
-    assert get_user_guild(playwright, launch_params) == []
+    _leave_guild_if_present(playwright, launch_params)
     dialog = _open_create_guild_dialog(page, launch_params)
     name_input = dialog.get_by_placeholder(
         "Например: Стражи Рассвета"
@@ -417,3 +419,36 @@ def test_create_guild_normalizes_limits_and_cancel_keeps_state(
     dialog.get_by_role("button", name="Отмена").click()
     expect(dialog).to_have_count(0)
     assert get_user_guild(playwright, launch_params) == []
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "viewport",
+    [
+        pytest.param({"width": 1280, "height": 720}, id="desktop"),
+        pytest.param({"width": 390, "height": 844}, id="vk-mini-app"),
+    ],
+)
+def test_create_guild_controls_are_actionable_in_viewport(
+    page: Page,
+    playwright: Playwright,
+    viewport: dict[str, int],
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _leave_guild_if_present(playwright, launch_params)
+    page.set_viewport_size(viewport)
+    dialog = _open_create_guild_dialog(page, launch_params)
+
+    controls = [
+        dialog.get_by_placeholder("Например: Стражи Рассвета"),
+        dialog.get_by_placeholder("Например: DAWN"),
+        dialog.get_by_role("button", name="Отмена"),
+        dialog.get_by_role("button", name="Создать гильдию"),
+    ]
+    for control in controls:
+        control.scroll_into_view_if_needed()
+        expect(control).to_be_visible()
+        expect(control).to_be_in_viewport()
+
+    for button_name in ("Отмена", "Создать гильдию"):
+        dialog.get_by_role("button", name=button_name).click(trial=True)

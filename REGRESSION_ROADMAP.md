@@ -77,7 +77,8 @@
 - [ ] Технологии: список, details, scroll и back navigation.
 - [ ] Активация технологии — отдельно от read-only отображения.
 - [ ] Состав: данные участника и сортировка при достаточном числе пользователей.
-- [ ] Базовая вёрстка guild screens и модальных окон на mobile viewport.
+- [x] Базовая вёрстка entry screen и формы создания на desktop и mobile viewport.
+- [ ] Базовая вёрстка экранов существующей гильдии и member dialogs на mobile.
 
 ## P2 — Informational UI and customization
 
