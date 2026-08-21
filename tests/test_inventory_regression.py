@@ -4,9 +4,12 @@ import pytest
 from playwright.sync_api import Locator, Page, Playwright, expect
 
 from api_client import (
+    equip_inventory_item,
     get_required_env,
     get_user_inventory,
+    get_user_profile,
     reset_user,
+    unequip_inventory_item,
 )
 
 
@@ -402,3 +405,169 @@ def test_inventory_primary_controls_are_actionable_in_viewport(
     expect(guild_storage).to_be_in_viewport()
     if guild_storage.is_enabled():
         guild_storage.click(trial=True)
+
+
+@pytest.mark.regression
+def test_helmet_visibility_control_has_switch_semantics(
+    user_1_page: Page,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
+    user_1_page.get_by_role(
+        "button",
+        name="Инвентарь",
+        exact=True,
+    ).click()
+    user_1_page.get_by_role(
+        "button",
+        name="Настройки внешности",
+        exact=True,
+    ).click()
+
+    helmet_switch = user_1_page.get_by_role(
+        "switch",
+        name=re.compile(r"^Скрыть шлем"),
+    )
+    expect(helmet_switch).to_be_visible()
+    initial_value = helmet_switch.get_attribute("aria-checked")
+    assert initial_value in {"true", "false"}
+    toggled_value = "false" if initial_value == "true" else "true"
+
+    helmet_switch.click()
+    expect(helmet_switch).to_have_attribute("aria-checked", toggled_value)
+
+    helmet_switch.click()
+    expect(helmet_switch).to_have_attribute("aria-checked", initial_value)
+
+
+@pytest.mark.regression
+def test_stomach_information_matches_profile(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    stomach = get_user_profile(playwright, launch_params)["stomach"]
+    _open_inventory(user_1_page, launch_params)
+
+    # UI-017: the summary button currently exposes only "T{level} ›".
+    user_1_page.get_by_role(
+        "button",
+        name=f"T{stomach['level']} ›",
+        exact=True,
+    ).click()
+    stomach_dialog = user_1_page.get_by_role("dialog", name="Желудок")
+
+    expect(stomach_dialog).to_be_visible()
+    expect(stomach_dialog).to_contain_text(f"Ранг T{stomach['level']}")
+    expect(stomach_dialog).to_contain_text(
+        f"Уровень {float(stomach['level']):.2f}"
+    )
+    expect(stomach_dialog).to_contain_text(
+        re.compile(
+            rf"{stomach['fullness']}\s*/\s*{stomach['maxFullness']}"
+        )
+    )
+
+    stomach_dialog.get_by_role(
+        "button",
+        name="Закрыть",
+        exact=True,
+    ).click()
+    expect(stomach_dialog).to_have_count(0)
+
+
+@pytest.mark.regression
+def test_character_power_updates_after_api_equipment_and_closes_on_backdrop(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    item = next(
+        item
+        for item in get_user_inventory(playwright, launch_params)
+        if item["id"] == DETAIL_ITEM_ID
+    )
+    equipped = False
+
+    try:
+        _open_inventory(user_1_page, launch_params)
+        item_dialog = _open_item_dialog(user_1_page, item["name"])
+        power_control = item_dialog.get_by_role(
+            "button",
+            name=re.compile(r"^\d+ Мощь"),
+        )
+        item_power_match = re.search(r"\d+", power_control.inner_text())
+        assert item_power_match is not None
+        item_power = int(item_power_match.group())
+        item_dialog.get_by_role(
+            "button",
+            name="Закрыть",
+            exact=True,
+        ).click()
+
+        user_1_page.get_by_role(
+            "button",
+            name="0 ›",
+            exact=True,
+        ).click()
+        power_dialog = user_1_page.get_by_role("dialog").filter(
+            has=user_1_page.get_by_role(
+                "heading",
+                name="Мощь персонажа",
+            )
+        )
+        expect(power_dialog).to_contain_text("0 IP")
+        expect(power_dialog).to_contain_text("0 / 8 слотов")
+        power_dialog.get_by_role(
+            "button",
+            name="Закрыть обзор",
+            exact=True,
+        ).click()
+
+        equip_inventory_item(
+            playwright,
+            launch_params,
+            item["id"],
+            "mainHand",
+        )
+        equipped = True
+        assert get_user_profile(playwright, launch_params)["equipment"][
+            "mainHand"
+        ]["id"] == item["id"]
+
+        user_1_page.reload()
+        expect(user_1_page.get_by_role("heading", name="Инвентарь")).to_be_visible()
+        user_1_page.get_by_role(
+            "button",
+            name=f"{item_power} ›",
+            exact=True,
+        ).click()
+        power_dialog = user_1_page.get_by_role("dialog").filter(
+            has=user_1_page.get_by_role(
+                "heading",
+                name="Мощь персонажа",
+            )
+        )
+        expect(power_dialog).to_contain_text(f"{item_power} IP")
+        expect(power_dialog).to_contain_text("1 / 8 слотов")
+        expect(power_dialog).to_contain_text(item["name"])
+        expect(power_dialog).to_contain_text(f"+{item_power} IP")
+
+        explanation = power_dialog.get_by_text(
+            re.compile(r"^Мощь предметов \(IP\) повышает"),
+        )
+        explanation.scroll_into_view_if_needed()
+        expect(explanation).to_be_visible()
+
+        dialog_box = power_dialog.bounding_box()
+        assert dialog_box is not None
+        assert dialog_box["x"] > 0 or dialog_box["y"] > 0
+        user_1_page.mouse.click(0, 0)
+        expect(power_dialog).to_have_count(0)
+    finally:
+        if equipped:
+            unequip_inventory_item(
+                playwright,
+                launch_params,
+                "mainHand",
+            )

@@ -1,4 +1,4 @@
-from math import floor
+from math import ceil, floor
 import re
 from urllib.parse import urlsplit
 
@@ -14,7 +14,6 @@ from api_client import (
 
 GOLD_TO_EXCHANGE = 200
 FEE_RATE = 0.05
-REINVESTED_FEE_RATE = 0.5
 SLIPPAGE_TOLERANCE = 0.01
 
 
@@ -30,10 +29,11 @@ def _calculate_amount_out(
     reserve_out: int,
     amount_in: int,
 ) -> int:
-    amount_after_fee = amount_in * (1 - FEE_RATE)
-    return floor(
-        reserve_out
-        - reserve_in * reserve_out / (reserve_in + amount_after_fee)
+    fee = ceil(amount_in * FEE_RATE)
+    amount_after_fee = amount_in - fee
+    return (
+        reserve_out * amount_after_fee
+        // (reserve_in + amount_after_fee)
     )
 
 
@@ -47,12 +47,12 @@ def _calculate_gold_to_silver_impact(
     amount_out: int,
 ) -> float:
     current_rate = pool["silverReserve"] / pool["goldReserve"]
-    fee = amount_in * FEE_RATE
+    fee = ceil(amount_in * FEE_RATE)
+    amount_after_fee = amount_in - fee
     projected_gold = (
         pool["goldReserve"]
-        + amount_in
-        - fee
-        + fee * REINVESTED_FEE_RATE
+        + amount_after_fee
+        + fee // 2
     )
     projected_silver = pool["silverReserve"] - amount_out
     projected_rate = projected_silver / projected_gold
@@ -125,6 +125,7 @@ def test_exchange_gold_to_silver_and_back(
         user_1_page.get_by_role(
             "button",
             name="Обменять",
+            exact=True,
         ).click()
 
     first_exchange = first_exchange_info.value
@@ -171,6 +172,7 @@ def test_exchange_gold_to_silver_and_back(
         user_1_page.get_by_role(
             "button",
             name="Обменять",
+            exact=True,
         ).click()
 
     second_exchange = second_exchange_info.value
@@ -269,6 +271,7 @@ def test_exchange_information_and_back_navigation(
     [
         pytest.param("", "", id="empty"),
         pytest.param("0", "0", id="zero"),
+        pytest.param("99", "99", id="below-contract-minimum"),
         pytest.param("-1", "0", id="negative"),
         pytest.param("1.5", "1.5", id="fractional"),
         pytest.param("abc", "", id="non-numeric"),
@@ -436,8 +439,8 @@ def test_exchange_primary_controls_fit_viewport(
         page.get_by_role("button", name="О Бирже валюты"),
         amount_input,
         page.get_by_role("button", name="МАКС", exact=True),
-        page.get_by_role("button", name="Увеличить на 100"),
-        page.get_by_role("button", name="Уменьшить на 100"),
+        page.get_by_role("button", name=re.compile(r"^Увеличить на \d+$")),
+        page.get_by_role("button", name=re.compile(r"^Уменьшить на \d+$")),
         page.get_by_role(
             "button",
             name="Обменять серебро на золото",
@@ -457,3 +460,21 @@ def test_exchange_primary_controls_fit_viewport(
     for control in controls[:6]:
         if control.is_enabled():
             control.click(trial=True)
+
+
+@pytest.mark.regression
+def test_exchange_rejects_amount_above_contract_limit(page: Page) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    amount_input = _open_exchange(page, launch_params)
+
+    amount_input.fill("2000000")
+
+    expect(
+        page.get_by_text(
+            "Максимальная сумма обмена — 1 000 000",
+            exact=True,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_role("button", name="Обменять", exact=True)
+    ).to_be_disabled()

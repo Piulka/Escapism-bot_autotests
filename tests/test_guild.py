@@ -13,6 +13,7 @@ from playwright.sync_api import (
 
 from api_client import (
     apply_to_guild,
+    attempt_guild_technology_action,
     attempt_kick_guild_member,
     create_user_guild,
     decide_guild_application,
@@ -161,6 +162,27 @@ def _create_guild_with_member(
         "accept",
     )
     return guild_name
+
+
+@pytest.mark.regression
+def test_open_mail_from_guild_header(user_1_page: Page) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
+    user_1_page.get_by_label("Гильдия").click()
+    expect(
+        user_1_page.get_by_role("heading", name="Поиск гильдии")
+    ).to_be_visible()
+
+    user_1_page.get_by_role(
+        "button",
+        name="Почта и уведомления",
+        exact=True,
+    ).click()
+
+    expect(user_1_page).to_have_url(re.compile(r"#/mail$"))
+    expect(
+        user_1_page.get_by_role("heading", name="Почта", exact=True)
+    ).to_be_visible()
 
 
 @pytest.mark.smoke
@@ -525,7 +547,10 @@ def test_create_guild_controls_are_actionable_in_viewport(
 
 @pytest.mark.regression
 @pytest.mark.xfail(
-    reason="UI-011: rejected guild application remains submitted in catalog",
+    reason=(
+        "UI-011: after reapply badge shows one application while the "
+        "applications list is empty"
+    ),
     strict=True,
 )
 def test_reject_reapply_accept_and_leave_guild(
@@ -592,12 +617,20 @@ def test_reject_reapply_accept_and_leave_guild(
         reject_path = (
             f"/api/guild/applications/{first_application['id']}/reject"
         )
+        application_card.get_by_role(
+            "button",
+            name="Отклонить",
+        ).click()
+        reject_dialog = user_1_page.get_by_role("dialog")
+        expect(reject_dialog).to_be_visible()
+        expect(reject_dialog).to_contain_text(MEMBER_NAME)
         with user_1_page.expect_response(
             lambda response: _is_post_response(response, reject_path)
         ) as reject_info:
-            application_card.get_by_role(
+            reject_dialog.get_by_role(
                 "button",
-                name="Отклонить",
+                name="Да, отклонить",
+                exact=True,
             ).click()
         assert reject_info.value.status == 200
         expect(applicant).to_have_count(0)
@@ -695,10 +728,6 @@ def test_reject_reapply_accept_and_leave_guild(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="UI-014: regular member sees recruitment edit control",
-    strict=True,
-)
 def test_regular_guild_member_cannot_use_leader_actions(
     user_2_page: Page,
     reset_user_1: None,
@@ -791,6 +820,23 @@ def test_regular_guild_member_cannot_kick_through_api(
             playwright,
             user_2_launch_params,
         ) == members_before
+
+        technology_id = get_guild_technologies(
+            playwright,
+            user_2_launch_params,
+        )[0]["id"]
+        for action in ("activate", "deactivate"):
+            status, body = attempt_guild_technology_action(
+                playwright,
+                user_2_launch_params,
+                action,
+                technology_id,
+            )
+            assert status == 400
+            assert body == {
+                "error": "Недостаточно прав.",
+                "code": "VALIDATION_ERROR",
+            }
     finally:
         _leave_guild_users(
             playwright,
@@ -864,10 +910,6 @@ def test_cancel_and_save_guild_recruitment_text(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="UI-012: recruitment textarea truncates documented 500 chars to 250",
-    strict=True,
-)
 def test_guild_recruitment_accepts_documented_500_character_limit(
     user_1_page: Page,
     playwright: Playwright,
@@ -972,7 +1014,7 @@ def test_guild_catalog_details_and_leader_vk_link(
                 "noopener noreferrer",
             )
 
-        dialog.get_by_role("button", name="Закрыть").click()
+        dialog.get_by_label("Закрыть", exact=True).click()
         expect(dialog).to_have_count(0)
     finally:
         _leave_guild_if_present(playwright, leader_launch_params)
@@ -1032,10 +1074,6 @@ def test_guild_technologies_list_scroll_and_back_navigation(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="UI-015: guild technology details button is covered by card",
-    strict=True,
-)
 def test_guild_technology_details_button_opens_dialog(
     user_1_page: Page,
     playwright: Playwright,
@@ -1057,10 +1095,23 @@ def test_guild_technology_details_button_opens_dialog(
             get_required_env("BASE_URL") + launch_params + "#/guild"
         )
         user_1_page.get_by_role("button", name="Технологии").click()
-        technology_card = user_1_page.get_by_role(
+        technology_heading = user_1_page.get_by_role(
             "heading",
             name=technology["name"],
-        ).locator(
+        )
+        technology_accordion = technology_heading.locator(
+            "xpath=ancestor::*[@role='button'][1]"
+        )
+        expect(technology_accordion).to_have_attribute(
+            "aria-expanded",
+            "false",
+        )
+        technology_accordion.click()
+        expect(technology_accordion).to_have_attribute(
+            "aria-expanded",
+            "true",
+        )
+        technology_card = technology_heading.locator(
             "xpath=ancestor::div[contains(@class, 'rounded-xl')][1]"
         )
         technology_card.get_by_role(

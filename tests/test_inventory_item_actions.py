@@ -40,9 +40,7 @@ def _has_item(items: list[dict], item_id: str) -> bool:
 
 
 def _get_main_hand_slot(page: Page) -> Locator:
-    return page.locator(
-        '[data-testid="equipment-slot-mainHand"]:visible'
-    )
+    return page.get_by_test_id("equipment-slot-mainHand")
 
 
 @pytest.mark.regression
@@ -295,10 +293,6 @@ def test_move_item_between_inventory_warehouse_and_equipment(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="UI-008: equip action still loses its name when locked",
-    strict=True,
-)
 def test_lock_item_blocks_dangerous_actions_and_unlock_restores_them(
     user_1_page: Page,
     playwright: Playwright,

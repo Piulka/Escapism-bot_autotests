@@ -33,6 +33,13 @@ def _is_mail_response(response: Response, path: str) -> bool:
     )
 
 
+def _is_mail_delete_response(response: Response, mail_id: str) -> bool:
+    return (
+        response.request.method == "DELETE"
+        and urlsplit(response.url).path == f"/api/mail/{mail_id}"
+    )
+
+
 def _inventory_quantities(
     inventory: list[dict],
 ) -> dict[str, int]:
@@ -133,7 +140,8 @@ def test_send_and_claim_mail_attachments(
         user_1_page.get_by_role(
             "button",
             name="Отправить",
-        ).click()
+            exact=True,
+        ).first.click()
         user_1_page.get_by_placeholder("Имя игрока").fill(
             RECIPIENT_NAME
         )
@@ -617,6 +625,112 @@ def test_mail_limits_attachments_and_allows_removal(
 
     expect(page.get_by_text("Вложения (4/5)", exact=True)).to_be_visible()
     expect(remove_buttons).to_have_count(4)
+
+
+@pytest.mark.regression
+def test_mail_compose_uses_documented_text_limits(page: Page) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    _open_mail_compose(page, launch_params)
+
+    recipient = page.get_by_placeholder("Имя игрока")
+    subject = page.get_by_placeholder("Тема письма")
+    body = page.get_by_placeholder("Текст сообщения...")
+
+    expect(recipient).to_have_attribute("maxlength", "30")
+    expect(subject).to_have_attribute("maxlength", "120")
+    expect(body).to_have_attribute("maxlength", "4000")
+    for counter in ("0/30", "0/120", "0/4000"):
+        expect(page.get_by_text(counter, exact=True)).to_be_visible()
+
+    subject.fill("S" * 120)
+    body.fill("B" * 4000)
+    expect(page.get_by_text("120/120", exact=True)).to_be_visible()
+    expect(page.get_by_text("4000/4000", exact=True)).to_be_visible()
+
+
+@pytest.mark.regression
+def test_mail_delete_requires_confirmation(
+    page: Page,
+    playwright: Playwright,
+) -> None:
+    sender_launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_2")
+    mail_title = f"Delete confirmation {uuid4().hex[:8]}"
+    send_user_mail(
+        playwright,
+        sender_launch_params,
+        {
+            "to": RECIPIENT_NAME,
+            "title": mail_title,
+            "content": "Проверка подтверждения удаления",
+            "attachments": [],
+        },
+    )
+    message = _find_mail_by_title(
+        get_user_mail(playwright, launch_params),
+        mail_title,
+    )
+
+    try:
+        page.goto(get_required_env("BASE_URL") + launch_params)
+        page.get_by_label("Почта").click()
+        page.get_by_role(
+            "button",
+            name=f"{mail_title}, не прочитано",
+            exact=True,
+        ).click()
+
+        delete_button = page.get_by_role(
+            "button",
+            name="Удалить письмо",
+            exact=True,
+        )
+        expect(delete_button).to_be_visible()
+        delete_button.click()
+        confirmation = page.get_by_role("dialog", name="Удаление письма")
+        expect(confirmation).to_be_visible()
+        expect(confirmation).to_contain_text(
+            "Письмо будет удалено без возможности восстановления."
+        )
+        confirmation.get_by_role(
+            "button",
+            name="Отмена",
+            exact=True,
+        ).click()
+        expect(confirmation).to_have_count(0)
+        assert _find_mail_by_title(
+            get_user_mail(playwright, launch_params),
+            mail_title,
+        )["id"] == message["id"]
+
+        delete_button.click()
+        confirmation = page.get_by_role("dialog", name="Удаление письма")
+        expect(confirmation).to_be_visible()
+        with page.expect_response(
+            lambda response: _is_mail_delete_response(
+                response,
+                str(message["id"]),
+            )
+        ) as delete_response_info:
+            confirmation.get_by_role(
+                "button",
+                name="Удалить",
+                exact=True,
+            ).click()
+
+        assert delete_response_info.value.status == 200
+        assert all(
+            item["id"] != message["id"]
+            for item in get_user_mail(playwright, launch_params)["items"]
+        )
+        expect(page.get_by_text(mail_title, exact=True)).to_have_count(0)
+    finally:
+        remaining_ids = {
+            item["id"]
+            for item in get_user_mail(playwright, launch_params)["items"]
+        }
+        if message["id"] in remaining_ids:
+            delete_user_mail(playwright, launch_params, message["id"])
 
 
 @pytest.mark.regression

@@ -60,7 +60,10 @@ def _get_json(
     return response.json()
 
 
-def reset_user(playwright: Playwright, launch_params: str) -> None:
+def reset_user(
+    playwright: Playwright,
+    launch_params: str,
+) -> dict[str, Any]:
     _validate_launch_params(launch_params)
     api_context = playwright.request.new_context(
         base_url=_get_api_url(),
@@ -70,6 +73,7 @@ def reset_user(playwright: Playwright, launch_params: str) -> None:
     try:
         response = api_context.post("v1/account/reset")
         _assert_status(response, 200, "POST")
+        return response.json()
     finally:
         api_context.dispose()
 
@@ -86,6 +90,68 @@ def get_user_profile(
 
     try:
         return _get_json(api_context, "v1/profile")
+    finally:
+        api_context.dispose()
+
+
+def get_user_titles(
+    playwright: Playwright,
+    launch_params: str,
+) -> list[dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        return _get_json(api_context, "v1/titles")
+    finally:
+        api_context.dispose()
+
+
+def select_user_title(
+    playwright: Playwright,
+    launch_params: str,
+    title_id: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "v1/titles/select",
+            data={"titleId": title_id},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def select_profile_customization(
+    playwright: Playwright,
+    launch_params: str,
+    endpoint: str,
+    payload_key: str,
+    value: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    assert endpoint in {"banner", "frame", "avatar"}
+    assert payload_key == f"{endpoint}Id"
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            f"v1/profile/{endpoint}",
+            data={payload_key: value},
+        )
+        _assert_status(response, 200, "POST")
     finally:
         api_context.dispose()
 
@@ -196,6 +262,28 @@ def unequip_inventory_item(
         response = api_context.post(
             "inventory/unequip",
             data={"slotKey": slot_key},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def equip_inventory_item(
+    playwright: Playwright,
+    launch_params: str,
+    item_id: str,
+    slot_key: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "inventory/equip",
+            data={"itemId": item_id, "slotKey": slot_key},
         )
         _assert_status(response, 200, "POST")
     finally:
@@ -428,6 +516,29 @@ def get_guild_applications(
             api_context,
             "guild/applications",
         )
+    finally:
+        api_context.dispose()
+
+
+def attempt_guild_technology_action(
+    playwright: Playwright,
+    launch_params: str,
+    action: str,
+    technology_id: str,
+) -> tuple[int, dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    assert action in {"activate", "deactivate"}
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            f"guild/techs/{action}",
+            data={"techId": technology_id},
+        )
+        return response.status, response.json()
     finally:
         api_context.dispose()
 
