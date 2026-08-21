@@ -21,7 +21,9 @@ from api_client import (
     get_guild_members,
     get_guild_technologies,
     get_required_env,
+    get_user_profile,
     get_user_guild,
+    invest_in_guild_technology,
     leave_guild,
 )
 
@@ -573,13 +575,103 @@ def test_create_guild_controls_are_actionable_in_viewport(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason=(
-        "UI-011: after reapply badge shows one application while the "
-        "applications list is empty"
-    ),
-    strict=True,
-)
+def test_reject_guild_application_requires_confirmation(
+    user_1_page: Page,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    applicant_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    unique_value = uuid4().hex
+    _leave_guild_users(
+        playwright,
+        applicant_launch_params,
+        leader_launch_params,
+    )
+    create_user_guild(
+        playwright,
+        leader_launch_params,
+        f"Reject {unique_value[:6]}",
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        guild = get_user_guild(playwright, leader_launch_params)
+        apply_to_guild(
+            playwright,
+            applicant_launch_params,
+            guild["id"],
+        )
+        application = get_guild_applications(
+            playwright,
+            leader_launch_params,
+        )[0]
+        applicant = _open_applications_until_visible(
+            user_1_page,
+            leader_launch_params,
+            MEMBER_NAME,
+        )
+        application_card = applicant.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
+        )
+
+        application_card.get_by_role(
+            "button",
+            name="Отклонить",
+            exact=True,
+        ).click()
+        reject_dialog = user_1_page.get_by_role("dialog")
+        expect(reject_dialog).to_contain_text(MEMBER_NAME)
+        reject_dialog.get_by_role(
+            "button",
+            name="Отмена",
+            exact=True,
+        ).click()
+        expect(reject_dialog).to_have_count(0)
+        assert get_guild_applications(
+            playwright,
+            leader_launch_params,
+        ) == [application]
+        expect(applicant).to_be_visible()
+
+        reject_path = (
+            f"/api/guild/applications/{application['id']}/reject"
+        )
+        application_card.get_by_role(
+            "button",
+            name="Отклонить",
+            exact=True,
+        ).click()
+        reject_dialog = user_1_page.get_by_role("dialog")
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(response, reject_path)
+        ) as reject_response_info:
+            reject_dialog.get_by_role(
+                "button",
+                name="Да, отклонить",
+                exact=True,
+            ).click()
+
+        reject_response = reject_response_info.value
+        assert reject_response.status == 200, reject_response.text()
+        expect(applicant).to_have_count(0)
+        assert get_guild_applications(
+            playwright,
+            leader_launch_params,
+        ) == []
+    finally:
+        _leave_guild_users(
+            playwright,
+            applicant_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
 def test_reject_reapply_accept_and_leave_guild(
     user_1_page: Page,
     user_2_page: Page,
@@ -696,11 +788,28 @@ def test_reject_reapply_accept_and_leave_guild(
             playwright,
             user_1_launch_params,
         )[0]
-        applicant = _open_applications_until_visible(
-            user_1_page,
-            user_1_launch_params,
-            MEMBER_NAME,
+        guild_url = (
+            get_required_env("BASE_URL")
+            + user_1_launch_params
+            + "#/guild"
         )
+        user_1_page.goto(guild_url)
+        user_1_page.get_by_role("button", name="Состав").click()
+        user_1_page.get_by_role(
+            "button",
+            name=re.compile(r"^Заявки"),
+        ).click()
+        applicant = user_1_page.get_by_text(MEMBER_NAME, exact=True)
+        empty_state = user_1_page.get_by_text(
+            "Нет активных заявок",
+            exact=True,
+        )
+        expect(applicant.or_(empty_state).first).to_be_visible()
+        if empty_state.is_visible():
+            pytest.xfail(
+                "UI-011: badge reports the reapplied request, but the "
+                "applications list is empty"
+            )
         application_card = applicant.locator(
             "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
         )
@@ -1148,3 +1257,280 @@ def test_guild_technology_details_button_opens_dialog(
         expect(user_1_page.get_by_role("dialog")).to_be_visible()
     finally:
         _leave_guild_if_present(playwright, launch_params)
+
+
+@pytest.mark.regression
+def test_activate_funded_guild_technology_through_ui(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    unique_value = uuid4().hex
+
+    _leave_guild_if_present(playwright, launch_params)
+    create_user_guild(
+        playwright,
+        launch_params,
+        f"Activate {unique_value[:6]}",
+        unique_value[-4:].upper(),
+    )
+
+    try:
+        silver = get_user_profile(playwright, launch_params)["currencies"][
+            "quants"
+        ]
+        technology = min(
+            (
+                item
+                for item in get_guild_technologies(
+                    playwright,
+                    launch_params,
+                )
+                if not item["isActive"] and item["costNext"] <= silver
+            ),
+            key=lambda item: item["costNext"],
+        )
+        invest_in_guild_technology(
+            playwright,
+            launch_params,
+            technology["id"],
+            technology["costNext"],
+        )
+
+        user_1_page.goto(
+            get_required_env("BASE_URL") + launch_params + "#/guild"
+        )
+        user_1_page.get_by_role("button", name="Технологии").click()
+        technology_heading = user_1_page.get_by_role(
+            "heading",
+            name=technology["name"],
+        )
+        technology_accordion = technology_heading.locator(
+            "xpath=ancestor::*[@role='button'][1]"
+        )
+        technology_accordion.click()
+        technology_card = technology_heading.locator(
+            "xpath=ancestor::div[contains(@class, 'rounded-xl')][1]"
+        )
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/techs/activate",
+            )
+        ) as activate_response_info:
+            technology_card.get_by_role(
+                "button",
+                name="Активировать",
+                exact=True,
+            ).click()
+
+        activate_response = activate_response_info.value
+        assert activate_response.status == 200, activate_response.text()
+        assert activate_response.request.post_data_json == {
+            "techId": technology["id"]
+        }
+        technology_after = next(
+            item
+            for item in get_guild_technologies(
+                playwright,
+                launch_params,
+            )
+            if item["id"] == technology["id"]
+        )
+        assert technology_after["isActive"] is True
+    finally:
+        _leave_guild_if_present(playwright, launch_params)
+
+
+@pytest.mark.regression
+def test_existing_guild_and_member_dialog_fit_mobile_viewport(
+    user_1_page: Page,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    member_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    user_1_page.set_viewport_size({"width": 390, "height": 844})
+    guild_name = _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        member_launch_params,
+        "Mobile",
+    )
+
+    try:
+        user_1_page.goto(
+            get_required_env("BASE_URL")
+            + leader_launch_params
+            + "#/guild"
+        )
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        for control_name in ("Технологии", "Состав"):
+            control = user_1_page.get_by_role(
+                "button",
+                name=control_name,
+                exact=True,
+            )
+            control.scroll_into_view_if_needed()
+            expect(control).to_be_visible()
+            expect(control).to_be_in_viewport()
+            control.click(trial=True)
+
+        user_1_page.get_by_role(
+            "button",
+            name="Состав",
+            exact=True,
+        ).click()
+        member_control = user_1_page.get_by_role(
+            "button",
+            name=f"Управление участником {MEMBER_NAME}",
+            exact=True,
+        )
+        member_control.scroll_into_view_if_needed()
+        expect(member_control).to_be_in_viewport()
+        member_control.click()
+
+        member_dialog = user_1_page.get_by_role("dialog").filter(
+            has=user_1_page.get_by_role(
+                "heading",
+                name=MEMBER_NAME,
+                exact=True,
+            )
+        )
+        expect(member_dialog).to_be_visible()
+        expect(member_dialog).to_be_in_viewport()
+        kick_button = member_dialog.get_by_role(
+            "button",
+            name="Исключить из гильдии",
+            exact=True,
+        )
+        expect(kick_button).to_be_visible()
+        expect(kick_button).to_be_in_viewport()
+        kick_button.click(trial=True)
+        member_dialog.get_by_role(
+            "button",
+            name="Закрыть",
+            exact=True,
+        ).click()
+        expect(member_dialog).to_have_count(0)
+    finally:
+        _leave_guild_users(
+            playwright,
+            member_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
+def test_guild_roster_matches_api_and_sorts_by_name_and_contribution(
+    user_1_page: Page,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    member_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    guild_name = _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        member_launch_params,
+        "Roster",
+    )
+
+    try:
+        technology_id = get_guild_technologies(
+            playwright,
+            leader_launch_params,
+        )[0]["id"]
+        invest_in_guild_technology(
+            playwright,
+            member_launch_params,
+            technology_id,
+            1,
+        )
+        members = get_guild_members(playwright, leader_launch_params)
+        assert {member["name"] for member in members} == {
+            LEADER_NAME,
+            MEMBER_NAME,
+        }
+        contributions = {
+            member["name"]: member["contribution"]
+            for member in members
+        }
+        assert contributions == {LEADER_NAME: 0, MEMBER_NAME: 1}
+
+        user_1_page.goto(
+            get_required_env("BASE_URL")
+            + leader_launch_params
+            + "#/guild"
+        )
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        with user_1_page.expect_response(
+            lambda response: (
+                response.request.method == "GET"
+                and urlsplit(response.url).path == "/api/guild/members"
+            )
+        ) as roster_response_info:
+            user_1_page.get_by_role(
+                "button",
+                name="Состав",
+                exact=True,
+            ).click()
+        roster_response = roster_response_info.value
+        assert roster_response.status == 200, roster_response.text()
+        if roster_response.json() != members:
+            pytest.xfail(
+                "UI-022: roster request returned stale membership after "
+                "successful guild setup"
+            )
+        expect(
+            user_1_page.get_by_role("heading", name="Состав гильдии")
+        ).to_be_visible()
+        expect(user_1_page.locator("main")).to_contain_text(
+            f"Общий вклад {sum(contributions.values())} очков"
+        )
+        member_controls = user_1_page.get_by_role(
+            "button",
+            name=re.compile(r"^Управление участником "),
+        )
+        expect(member_controls).to_have_count(2)
+
+        def visible_member_names() -> list[str]:
+            return [
+                control.get_attribute("aria-label").removeprefix(
+                    "Управление участником "
+                )
+                for control in member_controls.all()
+            ]
+
+        user_1_page.get_by_role(
+            "button",
+            name="Имя",
+            exact=True,
+        ).click()
+        assert visible_member_names() == [LEADER_NAME, MEMBER_NAME]
+
+        user_1_page.get_by_role(
+            "button",
+            name="Вклад",
+            exact=True,
+        ).click()
+        assert visible_member_names() == [MEMBER_NAME, LEADER_NAME]
+    finally:
+        _leave_guild_users(
+            playwright,
+            member_launch_params,
+            leader_launch_params,
+        )

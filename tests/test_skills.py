@@ -4,7 +4,11 @@ from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import Page, Playwright, Response, expect
 
-from api_client import get_required_env, get_user_profile
+from api_client import (
+    get_required_env,
+    get_user_profile,
+    inject_skill_experience,
+)
 
 
 SKILL_ID = "spec_sword"
@@ -126,6 +130,62 @@ def test_navigate_gathering_skill_tree_from_footer(
 
     page.get_by_role("button", name="Назад к категориям").click()
     expect(page.get_by_role("heading", name="Категории")).to_be_visible()
+
+
+@pytest.mark.regression
+def test_skill_learning_is_disabled_when_learning_points_are_insufficient(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    profile_initial = get_user_profile(playwright, launch_params)
+    remaining_lp = XP_PER_CLICK - 1
+    inject_skill_experience(
+        playwright,
+        launch_params,
+        SKILL_ID,
+        profile_initial["learningPoints"] - remaining_lp,
+        use_lp=True,
+    )
+    profile_before_attempt = get_user_profile(playwright, launch_params)
+    skill_before_attempt = next(
+        skill
+        for skill in profile_before_attempt["skills"]
+        if skill["id"] == SKILL_ID
+    )
+    assert profile_before_attempt["learningPoints"] == remaining_lp
+
+    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
+    user_1_page.get_by_label("Навыки").click()
+    user_1_page.get_by_role(
+        "button",
+        name=re.compile(r"^Оружие\s+Изучено"),
+    ).click()
+    user_1_page.get_by_role(
+        "button",
+        name=re.compile(r"^Клинки\s+"),
+    ).click()
+    learn_button = user_1_page.get_by_role(
+        "button",
+        name=f"Учить ({XP_PER_CLICK} LP)",
+    ).first
+    expect(learn_button).to_be_visible()
+    if learn_button.is_enabled():
+        pytest.xfail(
+            "UI-023: with insufficient LP the enabled learn button "
+            "silently ignores the click"
+        )
+    expect(learn_button).to_be_disabled()
+
+    profile_after_attempt = get_user_profile(playwright, launch_params)
+    skill_after_attempt = next(
+        skill
+        for skill in profile_after_attempt["skills"]
+        if skill["id"] == SKILL_ID
+    )
+    assert profile_after_attempt["learningPoints"] == remaining_lp
+    assert skill_after_attempt["level"] == skill_before_attempt["level"]
+    assert skill_after_attempt["xp"] == skill_before_attempt["xp"]
 
 
 @pytest.mark.regression

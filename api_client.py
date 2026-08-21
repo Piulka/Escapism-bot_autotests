@@ -94,6 +94,35 @@ def get_user_profile(
         api_context.dispose()
 
 
+def inject_skill_experience(
+    playwright: Playwright,
+    launch_params: str,
+    skill_id: str,
+    amount: int,
+    *,
+    use_lp: bool,
+) -> None:
+    _validate_launch_params(launch_params)
+    assert 1 <= amount <= 100_000
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "skills/inject",
+            data={
+                "skillId": skill_id,
+                "amount": amount,
+                "useLp": use_lp,
+            },
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
 def get_user_titles(
     playwright: Playwright,
     launch_params: str,
@@ -539,6 +568,29 @@ def attempt_guild_technology_action(
             data={"techId": technology_id},
         )
         return response.status, response.json()
+    finally:
+        api_context.dispose()
+
+
+def invest_in_guild_technology(
+    playwright: Playwright,
+    launch_params: str,
+    technology_id: str,
+    amount: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    assert amount > 0
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/techs/invest",
+            data={"techId": technology_id, "amount": amount},
+        )
+        _assert_status(response, 200, "POST")
     finally:
         api_context.dispose()
 
