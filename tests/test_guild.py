@@ -185,6 +185,33 @@ def test_open_mail_from_guild_header(user_1_page: Page) -> None:
     ).to_be_visible()
 
 
+@pytest.mark.regression
+def test_open_and_close_guild_benefits(user_1_page: Page) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    user_1_page.goto(get_required_env("BASE_URL") + launch_params)
+    user_1_page.get_by_label("Гильдия").click()
+    benefits_button = user_1_page.get_by_role(
+        "button",
+        name="Преимущества гильдий",
+        exact=True,
+    )
+    expect(benefits_button).to_be_visible()
+    benefits_button.click()
+
+    dialog = user_1_page.get_by_role(
+        "dialog",
+        name="Преимущества гильдии",
+        exact=True,
+    )
+    expect(dialog).to_be_visible()
+    expect(dialog).to_contain_text("Технологии гильдии")
+    expect(dialog).to_contain_text("Казна и вклад")
+    expect(dialog).to_contain_text("Сообщество")
+
+    dialog.get_by_role("button", name="Понятно", exact=True).click()
+    expect(dialog).to_have_count(0)
+
+
 @pytest.mark.smoke
 def test_create_guild_accept_member_and_kick(
     user_1_page: Page,
