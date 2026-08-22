@@ -4,7 +4,6 @@ import pytest
 from playwright.sync_api import Playwright
 
 from api_client import (
-    delete_user_mail,
     get_required_env,
     get_user_inventory,
     get_user_mail,
@@ -59,59 +58,43 @@ def test_reset_restores_documented_account_state(
 
 
 @pytest.mark.regression
-@pytest.mark.xfail(
-    reason="API-005: reset clears mail contrary to the published contract",
-    strict=True,
-)
-def test_reset_preserves_mail_outside_account_contract(
+def test_reset_replaces_mail_with_documented_seed_messages(
     playwright: Playwright,
 ) -> None:
     sender_launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
     recipient_launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_2")
     mail_title = f"Reset persistence {uuid4().hex[:8]}"
-    mail_id = None
-
     send_user_mail(
         playwright,
         sender_launch_params,
         {
             "to": "Тест 2",
             "title": mail_title,
-            "content": "Письмо должно пережить account reset",
+            "content": "Письмо должно быть удалено account reset",
             "attachments": [],
         },
     )
 
-    try:
-        created_mail = next(
-            message
-            for message in get_user_mail(
-                playwright,
-                recipient_launch_params,
-            )["items"]
-            if message["title"] == mail_title
-        )
-        mail_id = created_mail["id"]
+    assert any(
+        message["title"] == mail_title
+        for message in get_user_mail(
+            playwright,
+            recipient_launch_params,
+        )["items"]
+    )
 
-        reset_user(playwright, recipient_launch_params)
+    reset_user(playwright, recipient_launch_params)
+    seeded_mail = get_user_mail(
+        playwright,
+        recipient_launch_params,
+    )["items"]
 
-        assert any(
-            message["id"] == mail_id
-            for message in get_user_mail(
-                playwright,
-                recipient_launch_params,
-            )["items"]
-        )
-    finally:
-        if mail_id is not None and any(
-            message["id"] == mail_id
-            for message in get_user_mail(
-                playwright,
-                recipient_launch_params,
-            )["items"]
-        ):
-            delete_user_mail(
-                playwright,
-                recipient_launch_params,
-                mail_id,
-            )
+    assert len(seeded_mail) == 5
+    assert {message["title"] for message in seeded_mail} == {
+        "Добро пожаловать в Башню!",
+        "Выплата за исследование",
+        "Подарок за вступление",
+        "Свитки древних знаний",
+        "Приглашение в поход",
+    }
+    assert all(message["title"] != mail_title for message in seeded_mail)

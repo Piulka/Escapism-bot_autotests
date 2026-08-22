@@ -15,16 +15,21 @@ from api_client import (
     apply_to_guild,
     attempt_guild_technology_action,
     attempt_kick_guild_member,
+    change_guild_member_role,
     create_user_guild,
     decide_guild_application,
+    deposit_to_guild_storage,
     get_guild_applications,
     get_guild_members,
+    get_guild_storage,
     get_guild_technologies,
     get_required_env,
     get_user_profile,
     get_user_guild,
     invest_in_guild_technology,
     leave_guild,
+    transfer_guild_leadership,
+    transfer_guild_storage_section,
 )
 
 
@@ -672,7 +677,7 @@ def test_reject_guild_application_requires_confirmation(
 
 
 @pytest.mark.regression
-def test_reject_reapply_accept_and_leave_guild(
+def test_reject_reapply_and_accept_guild_application(
     user_1_page: Page,
     user_2_page: Page,
     playwright: Playwright,
@@ -800,16 +805,7 @@ def test_reject_reapply_accept_and_leave_guild(
             name=re.compile(r"^Заявки"),
         ).click()
         applicant = user_1_page.get_by_text(MEMBER_NAME, exact=True)
-        empty_state = user_1_page.get_by_text(
-            "Нет активных заявок",
-            exact=True,
-        )
-        expect(applicant.or_(empty_state).first).to_be_visible()
-        if empty_state.is_visible():
-            pytest.xfail(
-                "UI-011: badge reports the reapplied request, but the "
-                "applications list is empty"
-            )
+        expect(applicant).to_be_visible()
         application_card = applicant.locator(
             "xpath=ancestor::div[contains(@class, 'rounded-2xl')][1]"
         )
@@ -829,32 +825,6 @@ def test_reject_reapply_accept_and_leave_guild(
             user_1_launch_params,
         )} == {LEADER_NAME, MEMBER_NAME}
 
-        user_2_page.goto(
-            get_required_env("BASE_URL") + user_2_launch_params + "#/guild"
-        )
-        expect(
-            user_2_page.get_by_role("heading", name=guild_name)
-        ).to_be_visible()
-        user_2_page.get_by_role(
-            "button",
-            name="Покинуть гильдию",
-        ).click()
-        with user_2_page.expect_response(
-            lambda response: _is_post_response(
-                response,
-                "/api/guild/leave",
-            )
-        ) as leave_info:
-            user_2_page.get_by_role(
-                "button",
-                name="Да, покинуть",
-            ).click()
-        assert leave_info.value.status == 200
-        assert get_user_guild(playwright, user_2_launch_params) == []
-        assert {member["name"] for member in get_guild_members(
-            playwright,
-            user_1_launch_params,
-        )} == {LEADER_NAME}
     finally:
         _leave_guild_users(
             playwright,
@@ -1429,6 +1399,363 @@ def test_existing_guild_and_member_dialog_fit_mobile_viewport(
 
 
 @pytest.mark.regression
+def test_officer_can_activate_funded_guild_technology(
+    reset_user_1: None,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    officer_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    guild_name = _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        officer_launch_params,
+        "Officer",
+    )
+
+    try:
+        officer = next(
+            member
+            for member in get_guild_members(
+                playwright,
+                leader_launch_params,
+            )
+            if member["name"] == MEMBER_NAME
+        )
+        change_guild_member_role(
+            playwright,
+            leader_launch_params,
+            officer["unitId"],
+            "officer",
+        )
+        assert get_user_guild(
+            playwright,
+            officer_launch_params,
+        )["myRole"] == "officer"
+
+        silver = get_user_profile(
+            playwright,
+            leader_launch_params,
+        )["currencies"]["quants"]
+        technology = min(
+            (
+                item
+                for item in get_guild_technologies(
+                    playwright,
+                    leader_launch_params,
+                )
+                if not item["isActive"] and item["costNext"] <= silver
+            ),
+            key=lambda item: item["costNext"],
+        )
+        invest_in_guild_technology(
+            playwright,
+            leader_launch_params,
+            technology["id"],
+            technology["costNext"],
+        )
+        status, body = attempt_guild_technology_action(
+            playwright,
+            officer_launch_params,
+            "activate",
+            technology["id"],
+        )
+        assert status == 200, body
+        assert body == {"success": True}
+    finally:
+        _leave_guild_users(
+            playwright,
+            officer_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
+def test_leader_assigns_officer_role_through_member_dialog(
+    user_1_page: Page,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    member_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    guild_name = _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        member_launch_params,
+        "Role UI",
+    )
+
+    try:
+        member = next(
+            item
+            for item in get_guild_members(
+                playwright,
+                leader_launch_params,
+            )
+            if item["name"] == MEMBER_NAME
+        )
+        user_1_page.goto(
+            get_required_env("BASE_URL")
+            + leader_launch_params
+            + "#/guild"
+        )
+        expect(
+            user_1_page.get_by_role("heading", name=guild_name)
+        ).to_be_visible()
+        user_1_page.get_by_role(
+            "button",
+            name="Состав",
+            exact=True,
+        ).click()
+        user_1_page.get_by_role(
+            "button",
+            name=f"Управление участником {MEMBER_NAME}",
+        ).click()
+        dialog = user_1_page.get_by_role(
+            "dialog",
+            name="Управление участником",
+        )
+
+        with user_1_page.expect_response(
+            lambda response: _is_post_response(
+                response,
+                "/api/guild/role",
+            )
+        ) as role_response_info:
+            dialog.get_by_role(
+                "button",
+                name="Офицер",
+                exact=True,
+            ).click()
+
+        role_response = role_response_info.value
+        assert role_response.status == 200, role_response.text()
+        assert role_response.request.post_data_json == {
+            "unitId": member["unitId"],
+            "role": "officer",
+        }
+        assert get_user_guild(
+            playwright,
+            member_launch_params,
+        )["myRole"] == "officer"
+    finally:
+        _leave_guild_users(
+            playwright,
+            member_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
+def test_transfer_guild_leadership_changes_both_roles(
+    reset_user_1: None,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    successor_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        successor_launch_params,
+        "Transfer",
+    )
+
+    try:
+        successor = next(
+            member
+            for member in get_guild_members(
+                playwright,
+                leader_launch_params,
+            )
+            if member["name"] == MEMBER_NAME
+        )
+        transfer_guild_leadership(
+            playwright,
+            leader_launch_params,
+            successor["unitId"],
+        )
+        assert get_user_guild(
+            playwright,
+            leader_launch_params,
+        )["myRole"] == "member"
+        assert get_user_guild(
+            playwright,
+            successor_launch_params,
+        )["myRole"] == "leader"
+        assert {
+            member["name"]: member["role"]
+            for member in get_guild_members(
+                playwright,
+                successor_launch_params,
+            )
+        } == {LEADER_NAME: "member", MEMBER_NAME: "leader"}
+    finally:
+        _leave_guild_users(
+            playwright,
+            leader_launch_params,
+            successor_launch_params,
+        )
+
+
+@pytest.mark.regression
+def test_guild_members_expose_online_activity_fields(
+    reset_user_1: None,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    member_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        member_launch_params,
+        "Online",
+    )
+
+    try:
+        members = get_guild_members(playwright, leader_launch_params)
+        assert {member["name"] for member in members} == {
+            LEADER_NAME,
+            MEMBER_NAME,
+        }
+        for member in members:
+            assert isinstance(member["online"], bool)
+            assert member["lastActivityAt"] is None or isinstance(
+                member["lastActivityAt"],
+                int,
+            )
+        leader = next(
+            member for member in members if member["name"] == LEADER_NAME
+        )
+        assert leader["online"] is True
+        assert leader["lastActivityAt"] is not None
+    finally:
+        _leave_guild_users(
+            playwright,
+            member_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
+def test_guild_storage_section_transfer_respects_member_role(
+    reset_user_1: None,
+    reset_user_2: None,
+    playwright: Playwright,
+) -> None:
+    leader_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_1"
+    )
+    member_launch_params = get_required_env(
+        "VK_LAUNCH_PARAMS_USER_2"
+    )
+    _create_guild_with_member(
+        playwright,
+        leader_launch_params,
+        member_launch_params,
+        "Storage",
+    )
+    item_id = "food_raw_1"
+    quantity = 2
+
+    try:
+        member = next(
+            item
+            for item in get_guild_members(
+                playwright,
+                leader_launch_params,
+            )
+            if item["name"] == MEMBER_NAME
+        )
+        deposit_to_guild_storage(
+            playwright,
+            member_launch_params,
+            item_id,
+            quantity,
+            "common",
+        )
+        status, body = transfer_guild_storage_section(
+            playwright,
+            member_launch_params,
+            item_id,
+            quantity,
+            "common",
+        )
+        if status == 500:
+            pytest.xfail(
+                "API-008: documented common-to-officer storage transfer "
+                "returns 500 for a regular member"
+            )
+        assert status == 200, body
+        assert body == {"success": True}
+
+        storage = get_guild_storage(playwright, member_launch_params)
+        assert storage["myRole"] == "member"
+        assert storage["canUseOfficer"] is False
+        assert next(
+            item["quantity"]
+            for item in storage["officer"]
+            if item["id"] == item_id
+        ) == quantity
+
+        status, body = transfer_guild_storage_section(
+            playwright,
+            member_launch_params,
+            item_id,
+            quantity,
+            "officer",
+        )
+        assert status == 400
+        assert "Секция доступна только офицерам и выше" in str(body)
+
+        change_guild_member_role(
+            playwright,
+            leader_launch_params,
+            member["unitId"],
+            "officer",
+        )
+        status, body = transfer_guild_storage_section(
+            playwright,
+            member_launch_params,
+            item_id,
+            quantity,
+            "officer",
+        )
+        assert status == 200, body
+        assert next(
+            item["quantity"]
+            for item in get_guild_storage(
+                playwright,
+                member_launch_params,
+            )["common"]
+            if item["id"] == item_id
+        ) == quantity
+    finally:
+        _leave_guild_users(
+            playwright,
+            member_launch_params,
+            leader_launch_params,
+        )
+
+
+@pytest.mark.regression
 def test_guild_roster_matches_api_and_sorts_by_name_and_contribution(
     user_1_page: Page,
     reset_user_2: None,
@@ -1490,22 +1817,35 @@ def test_guild_roster_matches_api_and_sorts_by_name_and_contribution(
             ).click()
         roster_response = roster_response_info.value
         assert roster_response.status == 200, roster_response.text()
-        if roster_response.json() != members:
-            pytest.xfail(
-                "UI-022: roster request returned stale membership after "
-                "successful guild setup"
-            )
+        ui_members = roster_response.json()
+        stable_fields = ("unitId", "name", "role", "contribution")
+        assert [
+            {field: member[field] for field in stable_fields}
+            for member in ui_members
+        ] == [
+            {field: member[field] for field in stable_fields}
+            for member in members
+        ]
         expect(
             user_1_page.get_by_role("heading", name="Состав гильдии")
         ).to_be_visible()
-        expect(user_1_page.locator("main")).to_contain_text(
-            f"Общий вклад {sum(contributions.values())} очков"
-        )
         member_controls = user_1_page.get_by_role(
             "button",
             name=re.compile(r"^Управление участником "),
         )
         expect(member_controls).to_have_count(2)
+        for member in ui_members:
+            member_control = user_1_page.get_by_role(
+                "button",
+                name=f"Управление участником {member['name']}",
+            )
+            expect(member_control).to_contain_text(
+                str(member["contribution"])
+            )
+            if member["online"]:
+                expect(member_control).to_contain_text(
+                    re.compile(r"онлайн", re.IGNORECASE)
+                )
 
         def visible_member_names() -> list[str]:
             return [

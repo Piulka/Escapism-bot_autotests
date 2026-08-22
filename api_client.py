@@ -94,6 +94,22 @@ def get_user_profile(
         api_context.dispose()
 
 
+def get_user_bootstrap(
+    playwright: Playwright,
+    launch_params: str,
+) -> dict[str, Any]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        return _get_json(api_context, "v1/bootstrap")
+    finally:
+        api_context.dispose()
+
+
 def inject_skill_experience(
     playwright: Playwright,
     launch_params: str,
@@ -510,6 +526,140 @@ def get_guild_members(
 
     try:
         return _get_json(api_context, "guild/members")
+    finally:
+        api_context.dispose()
+
+
+def change_guild_member_role(
+    playwright: Playwright,
+    launch_params: str,
+    unit_id: int,
+    role: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    assert role in {"member", "officer", "deputy"}
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/role",
+            data={"unitId": unit_id, "role": role},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def transfer_guild_leadership(
+    playwright: Playwright,
+    launch_params: str,
+    unit_id: int,
+) -> None:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/transfer-leadership",
+            data={"unitId": unit_id},
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def get_guild_storage(
+    playwright: Playwright,
+    launch_params: str,
+) -> dict[str, Any]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        return _get_json(api_context, "guild/storage")
+    finally:
+        api_context.dispose()
+
+
+def deposit_to_guild_storage(
+    playwright: Playwright,
+    launch_params: str,
+    item_id: str,
+    quantity: int,
+    section: str,
+) -> None:
+    _validate_launch_params(launch_params)
+    assert section in {"common", "officer"}
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/storage/deposit",
+            data={
+                "itemId": item_id,
+                "quantity": quantity,
+                "section": section,
+            },
+        )
+        _assert_status(response, 200, "POST")
+    finally:
+        api_context.dispose()
+
+
+def transfer_guild_storage_section(
+    playwright: Playwright,
+    launch_params: str,
+    item_id: str,
+    quantity: int,
+    section: str,
+) -> tuple[int, dict[str, Any]]:
+    _validate_launch_params(launch_params)
+    assert section in {"common", "officer"}
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.post(
+            "guild/storage/transfer-section",
+            data={
+                "itemId": item_id,
+                "quantity": quantity,
+                "section": section,
+            },
+        )
+        return response.status, response.json()
+    finally:
+        api_context.dispose()
+
+
+def get_backend_timing_headers(
+    playwright: Playwright,
+    launch_params: str,
+) -> dict[str, str]:
+    _validate_launch_params(launch_params)
+    api_context = playwright.request.new_context(
+        base_url=_get_api_url(),
+        extra_http_headers={"X-VK-Launch-Params": launch_params},
+    )
+
+    try:
+        response = api_context.get("v1/profile")
+        _assert_status(response, 200, "GET")
+        return response.headers
     finally:
         api_context.dispose()
 

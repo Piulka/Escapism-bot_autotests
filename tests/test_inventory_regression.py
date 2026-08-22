@@ -441,6 +441,53 @@ def test_helmet_visibility_control_has_switch_semantics(
 
 
 @pytest.mark.regression
+def test_equipped_helmet_visual_follows_visibility_switch(
+    user_1_page: Page,
+    playwright: Playwright,
+) -> None:
+    launch_params = get_required_env("VK_LAUNCH_PARAMS_USER_1")
+    equip_inventory_item(
+        playwright,
+        launch_params,
+        "eq_head_t1",
+        "head",
+    )
+
+    try:
+        _open_inventory(user_1_page, launch_params)
+        user_1_page.get_by_role(
+            "button",
+            name="Настройки внешности",
+            exact=True,
+        ).click()
+        helmet_switch = user_1_page.get_by_role(
+            "switch",
+            name=re.compile(r"^Скрыть шлем"),
+        )
+        expect(helmet_switch).to_have_attribute("aria-checked", "true")
+        expect(
+            user_1_page.locator('img[src*="avatar-helmet"]')
+        ).to_have_count(0)
+
+        helmet_switch.click()
+        expect(helmet_switch).to_have_attribute("aria-checked", "false")
+        expect(
+            user_1_page.locator('img[src*="avatar-helmet"]')
+        ).to_be_visible()
+
+        helmet_switch.click()
+        expect(helmet_switch).to_have_attribute("aria-checked", "true")
+        expect(
+            user_1_page.locator('img[src*="avatar-helmet"]')
+        ).to_have_count(0)
+        expect(
+            user_1_page.locator('img[src*="avatar-body"]').first
+        ).to_be_visible()
+    finally:
+        unequip_inventory_item(playwright, launch_params, "head")
+
+
+@pytest.mark.regression
 def test_stomach_information_matches_profile(
     user_1_page: Page,
     playwright: Playwright,
